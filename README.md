@@ -22,20 +22,31 @@ Agents marked 🌐 can search and read the web while they work, like Grok's real
 ## How a mission runs
 
 1. **Plan.** Atlas breaks your goal into 4–8 tasks. Each task gets an owner, a brief, a deliverable, dependencies, and a deadline inside your overall deadline.
-2. **Delegate.** Tasks start as soon as their dependencies are done. Up to `MAX_PARALLEL_TASKS` run at once, and the one with the earliest deadline goes first. Each agent gets its teammates' finished work as input.
+2. **Delegate.** Tasks start as soon as their dependencies are done. Up to `MAX_PARALLEL_TASKS` run at once, and the one with the earliest deadline goes first. Each bot gets its teammates' finished work and files as input.
 3. **Review.** Atlas approves each deliverable or sends it back once with feedback (`MAX_REVISIONS`).
 4. **Escalate.** A watchdog flags any task that passes its deadline and posts an escalation in the thread.
-5. **Report.** Once every task is finished, Atlas writes a mission report covering decisions, owners, deadline performance, risks and next moves.
+5. **Report.** Once every task is finished, Atlas writes a mission report. Every deliverable and the report are saved as files in the shared workspace.
 
-You can keep going after that. In the mission thread, **Delegate to team** has the CEO plan more work, and **Ask the CEO** gets you a status answer. You can also chat 1:1 with any agent from the **Team** page.
+## Grok Bot capabilities
 
-## UI
+| Capability | How it works here |
+|---|---|
+| **Team meetings / group chat** | Put 2–6 bots in a room (**Meetings**). The CEO moderates, the bots take turns and react to each other by name, and you can jump in. The meeting ends with minutes, decisions and action items that start as a mission with one click, or automatically. |
+| **Standups** | One click (**☀️ Standup now**) or a routine. Each bot reports what it finished, what's next and its blockers, from its real task list. |
+| **Teach a task (watch and learn)** | **Skills → Teach a task.** Share your screen and do the workflow once, narrating by typing or speaking. Changed frames are captured. The bot then opens the screenshots with Claude Code's Read tool and drafts a skill for you to review, edit, activate and test-run. |
+| **Skills** | Reusable procedures (steps, decision rules, output requirements, approval boundaries). Write them by hand, teach them by demo, or click **💾 Save as skill** on a finished task. Active skills go into the bot's instructions, and the CEO routes work to bots whose skills match. |
+| **Routines (schedules and triggers)** | Every N hours, daily, weekly, or when a mission or task completes. A routine can assign a task, run a skill, have the CEO plan a whole mission, or hold a standup. Includes run history and **Run now**. |
+| **Memory** | Each bot keeps its own memory. A one-line note is saved after every finished task, and you can add notes by hand or say "remember …" in chat. Memory goes into every prompt for that bot. |
+| **Approvals** | **Settings:** require your OK on the CEO's plan before work starts, and/or on every deliverable (**Approve / Request changes** with feedback). |
+| **Shared workspace (cloud computer)** | A real folder (`./workspace`) that every bot reads and writes with Claude Code's file tools. Browse, preview and download in **Files**. |
+| **Live web search** | Nova, Echo, Ledger, and any bot you create with "web" turned on, use WebSearch and WebFetch. |
+| **Create your own bots** | **Team → Create a bot:** pick a preset or write a name, main job, description and specialties. |
+| **Direct assignments** | **Assign task** on any bot, with a deadline and an optional skill. No CEO planning step. |
+| **Voice** | 🎙 dictation in every message box and 🔊 read-aloud on replies, using the browser's speech features (Chrome or Edge). |
 
-- **Command center:** a Grok-style home page with a large prompt box, deadline picker, suggestion chips and the team strip.
-- **Mission thread:** the CEO's plan with live delegation cards showing status, a countdown and streaming output. A collapsible "Thinking" panel shows tool activity.
-- **Task board:** a kanban view (Queued → Working → CEO review → Done / Failed) across all missions.
-- **Team:** agent cards with delivered count, on-time %, open work, and a 1:1 chat.
-- Works on phones too, with a collapsible sidebar.
+Two Grok Bot features aren't included:
+- **Joining Zoom or Google Meet calls.** xAI hasn't released it either, and a local app can't join calls without platform integrations.
+- **Remote browser control of other sites.** Bots use web search and fetch instead.
 
 ## Run it
 
@@ -69,29 +80,24 @@ This setup is for your own use on your own machine. Anthropic doesn't allow offe
 | `MAX_PARALLEL_TASKS` | `3` | Agents working at the same time |
 | `MAX_REVISIONS` | `1` | Times the CEO may send work back |
 | `DEMO_MODE` | `0` | `1` forces the offline demo |
-| `DATA_DIR` | `./data` | Where missions are saved (`state.json`) |
+| `DATA_DIR` | `./data` | Where missions, memory, skills and routines are saved (`state.json`) |
+| `WORKSPACE_DIR` | `./workspace` | The shared folder bots work in |
 
 ## Project layout
 
 ```
 server.js            HTTP server, JSON API, Server-Sent Events
-src/agents.js        the team: personas, specialties, tools, system prompts
-src/orchestrator.js  CEO loop: plan → delegate → run → review → report, deadline watchdog
+src/agents.js        the team: personas, custom bots, tools, memory, system prompts
+src/orchestrator.js  CEO loop: plan → approve → delegate → run → review → report, watchdog, memory
+src/meetings.js      team meetings & standups → minutes → action items
+src/skills.js        skills, save-as-skill, watch-and-learn teaching
+src/routines.js      schedules and event triggers
 src/llm.js           Claude Code bridge (headless `claude -p`, streamed)
 src/demo.js          offline demo engine
 src/store.js         JSON persistence (missions survive restarts and resume)
-public/              the UI (vanilla JS, no build step)
+public/              the UI (vanilla JS modules, no build step)
 ```
 
 ### API
 
-| Method | Path | |
-|---|---|---|
-| `GET` | `/api/meta` | engine info + agents |
-| `GET` | `/api/state` | all missions and tasks |
-| `GET` | `/api/events` | live SSE stream (mission/task updates, token deltas) |
-| `POST` | `/api/missions` | `{ goal, deadline }` → start a mission |
-| `POST` | `/api/missions/:id/messages` | `{ text, mode: "delegate" \| "ask" }` |
-| `POST` | `/api/missions/:id/cancel` | stop a mission |
-| `DELETE` | `/api/missions/:id` | delete a mission |
-| `GET/POST/DELETE` | `/api/chats/:agentId` | 1:1 chat with an agent (POST streams SSE) |
+See the `routes` table in `server.js`: missions, tasks (approval, save-as-skill), agents (create, assign, memory), chats (SSE), meetings, skills, teach, routines, files and settings. Live updates stream from `GET /api/events`.

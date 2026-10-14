@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { demoStream } from './demo.js';
+import { WORKSPACE } from './store.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -52,8 +53,6 @@ export function detectionReport() {
   return tried;
 }
 
-// Agents run in an empty folder so they don't pick up any project's CLAUDE.md.
-const WORKDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'yebunna-agent-'));
 
 // Strip API credentials so the CLI uses the subscription login, not API billing.
 const childEnv = { ...process.env };
@@ -80,10 +79,11 @@ function toPrompt(messages) {
  * Stream a Claude response. Yields `{ type: 'reasoning' | 'text', text }` events.
  *
  * effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' — how hard the agent thinks.
- * tools:  Claude Code tools the agent may use, e.g. ['WebSearch', 'WebFetch'].
+ * tools:  Claude Code tools the agent may use, e.g. ['Read', 'Write', 'WebSearch'].
+ * model:  optional model alias for this call (e.g. 'haiku' for cheap housekeeping).
  * demo:   function returning the scripted answer used in offline demo mode.
  */
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], signal, demo }) {
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 25, signal, demo }) {
   if (demoMode) {
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;
@@ -100,10 +100,10 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     '--effort', effort,
     '--tools', tools.join(','),
   ];
-  if (tools.length) args.push('--allowedTools', ...tools, '--max-turns', '12');
-  if (MODEL) args.push('--model', MODEL);
+  if (tools.length) args.push('--allowedTools', ...tools, '--max-turns', String(maxTurns));
+  if (model || MODEL) args.push('--model', model || MODEL);
 
-  const child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKDIR, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const kill = () => child.kill('SIGTERM');
   signal?.addEventListener('abort', kill, { once: true });
   child.stdin.end(toPrompt(messages));

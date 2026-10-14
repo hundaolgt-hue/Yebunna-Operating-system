@@ -1,10 +1,14 @@
-// The CEO loop: plan → delegate with deadlines → agents work (in parallel where
-// dependencies allow, earliest deadline first) → CEO reviews each deliverable →
-// final mission report. A watchdog escalates anything that misses its deadline.
+// The CEO loop: plan → (optional founder approval) → delegate with deadlines →
+// agents work in the shared workspace (in parallel where dependencies allow,
+// earliest deadline first) → CEO review → (optional founder approval) → mission
+// report. A watchdog escalates anything that misses its deadline, and every
+// finished task is filed in the workspace and summarised into the agent's memory.
 import { EventEmitter } from 'node:events';
-import { getAgent, systemPrompt, SPECIALISTS } from './agents.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { getAgent, systemPrompt, remember } from './agents.js';
 import { complete, extractJson } from './llm.js';
-import { state, save, newId } from './store.js';
+import { state, save, newId, now, slugify, WORKSPACE } from './store.js';
 import { demoPlan, demoOutput, demoReview, demoSummary } from './demo.js';
 
 export const bus = new EventEmitter();
@@ -12,9 +16,8 @@ bus.setMaxListeners(0);
 
 const MAX_PARALLEL = Number(process.env.MAX_PARALLEL_TASKS || 3);
 const MAX_REVISIONS = Number(process.env.MAX_REVISIONS || 1);
-const CEO = getAgent('ceo');
+const ceo = () => getAgent('ceo');
 const controllers = new Map(); // missionId -> AbortController
-const now = () => new Date().toISOString();
 
 // ---- events -----------------------------------------------------------------
 
@@ -40,14 +43,16 @@ function addThread(m, item) {
 /** Stream a completion into a thread item, so the UI shows it live. */
 async function streamInto(m, item, opts) {
   item.streaming = true;
-  const text = await complete({ ...opts, signal: signal(m) }, (ev) => {
-    const field = ev.type === 'reasoning' ? 'reasoning' : 'text';
-    if (opts.json && field === 'text') return; // raw JSON is not shown
-    item[field] += ev.text;
-    emitDelta('thread', item.id, m.id, field, ev.text);
-  });
-  item.streaming = false;
-  return text;
+  try {
+    return await complete({ ...opts, signal: signal(m) }, (ev) => {
+      const field = ev.type === 'reasoning' ? 'reasoning' : 'text';
+      if (opts.json && field === 'text') return; // raw JSON is not shown
+      item[field] += ev.text;
+      emitDelta('thread', item.id, m.id, field, ev.text);
+    });
+  } finally {
+    item.streaming = false;
+  }
 }
 
 function signal(m) {
@@ -58,11 +63,10 @@ function signal(m) {
 const hoursLeft = (m) => Math.max(0.25, (Date.parse(m.deadline) - Date.now()) / 36e5);
 const fmt = (iso) => new Date(iso).toUTCString();
 const clip = (s, n) => (s && s.length > n ? `${s.slice(0, n)}\n…[truncated]` : s || '');
-const missionTasks = (m) => m.taskIds.map((id) => state.tasks[id]).filter(Boolean);
+export const missionTasks = (m) => m.taskIds.map((id) => state.tasks[id]).filter(Boolean);
+const OPEN = ['queued', 'in_progress', 'review', 'approval'];
 
-// ---- public API -------------------------------------------------------------
-
-export function createMission({ goal, deadline }) {
+function newMission({ goal, deadline, source = 'founder' }) {
   const m = {
     id: newId('mis'),
     title: goal.length > 60 ? `${goal.slice(0, 57)}…` : goal,
@@ -70,12 +74,37 @@ export function createMission({ goal, deadline }) {
     deadline,
     createdAt: now(),
     status: 'planning',
+    source,
+    folder: `missions/${now().slice(0, 10)}-${slugify(goal, 32)}-${Math.random().toString(36).slice(2, 6)}`,
     taskIds: [],
     thread: [],
   };
+  fs.mkdirSync(path.join(WORKSPACE, m.folder), { recursive: true });
   state.missions[m.id] = m;
+  return m;
+}
+
+// ---- public API -------------------------------------------------------------
+
+export function createMission({ goal, deadline, source }) {
+  const m = newMission({ goal, deadline, source });
   addThread(m, { role: 'user', kind: 'text', text: goal });
   plan(m).catch((e) => fail(m, e));
+  return m;
+}
+
+/**
+ * Create a mission from tasks that are already decided (a direct assignment to one
+ * agent, a routine, or a meeting's action items) — no CEO planning step.
+ */
+export function createMissionWithTasks({ goal, deadline, specs, intro, source = 'founder' }) {
+  const m = newMission({ goal, deadline, source });
+  addThread(m, { role: 'user', kind: 'text', text: goal });
+  const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [], text: intro || 'Assigned. Work starts now.' });
+  addTasks(m, item, specs);
+  m.status = 'running';
+  emitMission(m);
+  schedule(m);
   return m;
 }
 
@@ -85,11 +114,36 @@ export function sendToMission(m, { text, mode }) {
   run.catch((e) => fail(m, e));
 }
 
+export function approvePlan(m) {
+  if (m.status !== 'awaiting_approval') return;
+  for (const item of m.thread) if (item.needsApproval) item.needsApproval = false;
+  addThread(m, { role: 'user', kind: 'text', text: '✅ Plan approved — go.' });
+  m.status = 'running';
+  emitMission(m);
+  schedule(m);
+}
+
+/** Founder signs off a deliverable (or sends it back with feedback). */
+export function decideTask(t, { approve, feedback }) {
+  const m = state.missions[t.missionId];
+  if (!m || t.status !== 'approval') return;
+  if (approve) {
+    finishTask(m, t);
+  } else {
+    t.feedback = feedback || 'The founder asked for changes.';
+    t.revisions += 1;
+    t.status = 'queued';
+    addThread(m, { role: 'user', kind: 'text', text: `Changes requested on “${t.title}”: ${t.feedback}` });
+  }
+  emitTask(t);
+  if (m.status === 'running') schedule(m);
+}
+
 export function cancelMission(m) {
   controllers.get(m.id)?.abort();
   controllers.delete(m.id);
   for (const t of missionTasks(m)) {
-    if (!['done', 'failed'].includes(t.status)) {
+    if (OPEN.includes(t.status)) {
       t.status = 'failed';
       t.error = 'Mission cancelled';
       emitTask(t);
@@ -110,6 +164,9 @@ export function deleteMission(m) {
 /** After a restart, put interrupted work back in the queue and carry on. */
 export function resumeAll() {
   for (const m of Object.values(state.missions)) {
+    // Missions from before the shared workspace existed get a folder now.
+    m.folder ||= `missions/${m.createdAt.slice(0, 10)}-${slugify(m.goal, 32)}-${m.id.slice(-4)}`;
+    fs.mkdirSync(path.join(WORKSPACE, m.folder), { recursive: true });
     for (const t of missionTasks(m)) {
       if (t.status === 'in_progress' || t.status === 'review') t.status = 'queued';
     }
@@ -125,53 +182,23 @@ export function resumeAll() {
 
 // ---- CEO: planning & delegation --------------------------------------------
 
-async function plan(m, instruction) {
-  m.status = 'planning';
-  emitMission(m);
-  const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [] });
-
-  const existing = missionTasks(m)
-    .map((t) => `- [${t.status}] ${t.title} → ${getAgent(t.agentId).name}`)
-    .join('\n');
-  const prompt = `Founder's goal: ${m.goal}
-Current time: ${fmt(now())}
-Mission deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} hours from now)
-${existing ? `\nTasks already delegated:\n${existing}\n` : ''}
-${instruction ? `New instruction from the founder: ${instruction}\nPlan ONLY the additional work this instruction needs.` : 'Break this goal into the work needed to ship it.'}
-
-Delegate each task to the single best specialist (never to "ceo"). Give each a realistic deadline
-in hours from now that fits inside the mission deadline, leaving time for dependencies. Keep it to
-${instruction ? '1–3' : '4–8'} focused tasks. Use depends_on (task keys) when a task needs another's output.
-
-Reply with ONLY a JSON object:
-{"summary": "<2–4 sentence message to the founder explaining the plan, Markdown allowed>",
- "tasks": [{"key": "t1", "agent": "<agent id>", "title": "<short imperative>", "brief": "<what to do and why>",
-            "deliverable": "<the concrete artifact to hand back>", "due_in_hours": <number>, "depends_on": ["<key>"]}]}`;
-
-  const raw = await streamInto(m, item, {
-    system: systemPrompt(CEO),
-    messages: [{ role: 'user', content: prompt }],
-    effort: 'high',
-    json: true,
-    demo: () => demoPlan(m.goal, hoursLeft(m), instruction),
-  });
-  const parsed = extractJson(raw);
-
+function addTasks(m, item, specs) {
   const deadlineMs = Date.parse(m.deadline);
   const keyToId = {};
-  const specs = (parsed.tasks || []).filter((s) => getAgent(s.agent) && s.agent !== 'ceo');
-  if (!specs.length) throw new Error('The CEO did not produce any tasks.');
-  for (const s of specs) keyToId[s.key] = newId('task');
+  specs = specs.filter((s) => getAgent(s.agent) && s.agent !== 'ceo');
+  if (!specs.length) throw new Error('No valid tasks to delegate.');
+  specs.forEach((s, i) => (keyToId[s.key || `t${i}`] = newId('task')));
 
-  for (const s of specs) {
+  specs.forEach((s, i) => {
     const due = Math.min(deadlineMs, Date.now() + Math.max(0.1, Number(s.due_in_hours) || 1) * 36e5);
     const t = {
-      id: keyToId[s.key],
+      id: keyToId[s.key || `t${i}`],
       missionId: m.id,
       agentId: s.agent,
       title: String(s.title || 'Untitled task'),
       brief: String(s.brief || ''),
       deliverable: String(s.deliverable || ''),
+      skillId: s.skillId || null,
       deadline: new Date(due).toISOString(),
       dependsOn: (s.depends_on || []).map((k) => keyToId[k]).filter(Boolean),
       status: 'queued',
@@ -184,9 +211,50 @@ Reply with ONLY a JSON object:
     m.taskIds.push(t.id);
     item.taskIds.push(t.id);
     emitTask(t);
-  }
+  });
+}
 
+async function plan(m, instruction) {
+  m.status = 'planning';
+  emitMission(m);
+  const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [] });
+
+  const existing = missionTasks(m)
+    .map((t) => `- [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}`)
+    .join('\n');
+  const prompt = `Founder's goal: ${m.goal}
+Current time: ${fmt(now())}
+Mission deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} hours from now)
+${existing ? `\nTasks already delegated:\n${existing}\n` : ''}
+${instruction ? `New instruction from the founder: ${instruction}\nPlan ONLY the additional work this instruction needs.` : 'Break this goal into the work needed to ship it.'}
+
+Delegate each task to the single best teammate (never to "ceo"); prefer one whose listed skills match.
+Give each a realistic deadline in hours from now that fits inside the mission deadline, leaving time
+for dependencies. Keep it to ${instruction ? '1–3' : '4–8'} focused tasks. Use depends_on (task keys)
+when a task needs another's output.
+
+Reply with ONLY a JSON object:
+{"summary": "<2–4 sentence message to the founder explaining the plan, Markdown allowed>",
+ "tasks": [{"key": "t1", "agent": "<agent id>", "title": "<short imperative>", "brief": "<what to do and why>",
+            "deliverable": "<the concrete artifact to hand back>", "due_in_hours": <number>, "depends_on": ["<key>"]}]}`;
+
+  const raw = await streamInto(m, item, {
+    system: systemPrompt(ceo()),
+    messages: [{ role: 'user', content: prompt }],
+    effort: 'high',
+    json: true,
+    demo: () => demoPlan(m.goal, hoursLeft(m), instruction),
+  });
+  const parsed = extractJson(raw);
+  addTasks(m, item, parsed.tasks || []);
   item.text = String(parsed.summary || 'Plan ready. Delegating now.');
+
+  if (state.settings.approvePlans) {
+    item.needsApproval = true;
+    m.status = 'awaiting_approval';
+    emitMission(m);
+    return;
+  }
   m.status = 'running';
   emitMission(m);
   schedule(m);
@@ -195,17 +263,18 @@ Reply with ONLY a JSON object:
 async function answer(m, question) {
   const item = addThread(m, { role: 'ceo', kind: 'text' });
   const status = missionTasks(m)
-    .map((t) => `### ${t.title} — ${getAgent(t.agentId).name} [${t.status}${t.late ? ', late' : ''}], due ${fmt(t.deadline)}\n${clip(t.output, 1500)}`)
+    .map((t) => `### ${t.title} — ${getAgent(t.agentId)?.name} [${t.status}${t.late ? ', late' : ''}], due ${fmt(t.deadline)}\n${clip(t.output, 1500)}`)
     .join('\n\n');
   await streamInto(m, item, {
-    system: systemPrompt(CEO),
+    system: systemPrompt(ceo()),
     messages: [
       {
         role: 'user',
-        content: `Mission: ${m.goal}\nDeadline: ${fmt(m.deadline)}\n\nTeam progress:\n${status || '(nothing yet)'}\n\nFounder asks: ${question}\n\nAnswer as the CEO. Do not delegate new work in this reply.`,
+        content: `Mission: ${m.goal}\nDeadline: ${fmt(m.deadline)}\nFiles: ${m.folder}/\n\nTeam progress:\n${status || '(nothing yet)'}\n\nFounder asks: ${question}\n\nAnswer as the CEO. Do not delegate new work in this reply.`,
       },
     ],
-    demo: () => `Good question. Right now ${missionTasks(m).filter((t) => t.status === 'done').length} of ${m.taskIds.length} tasks are done. My recommendation: keep the scope tight and ship. (Demo mode — add an API key for a real answer.)`,
+    tools: ceo().tools,
+    demo: () => `Good question. Right now ${missionTasks(m).filter((t) => t.status === 'done').length} of ${m.taskIds.length} tasks are done. My recommendation: keep the scope tight and ship. (Demo mode — log in to Claude Code for a real answer.)`,
   });
   emitMission(m);
 }
@@ -226,21 +295,27 @@ function schedule(m) {
     }
   }
 
-  const active = tasks.filter((t) => t.status === 'in_progress' || t.status === 'review').length;
+  const busy = tasks.filter((t) => t.status === 'in_progress' || t.status === 'review').length;
   const ready = tasks
     .filter((t) => t.status === 'queued' && t.dependsOn.every((id) => state.tasks[id]?.status === 'done'))
     .sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline)); // earliest deadline first
-  for (const t of ready.slice(0, Math.max(0, MAX_PARALLEL - active))) {
+  for (const t of ready.slice(0, Math.max(0, MAX_PARALLEL - busy))) {
     runTask(m, t).catch((e) => console.error('task crashed', e));
   }
 
-  if (active === 0 && ready.length === 0 && tasks.every((t) => ['done', 'failed'].includes(t.status))) {
+  if (busy === 0 && ready.length === 0 && tasks.every((t) => ['done', 'failed'].includes(t.status))) {
     report(m).catch((e) => fail(m, e));
   }
 }
 
 async function runTask(m, t) {
   const agent = getAgent(t.agentId);
+  if (!agent) {
+    t.status = 'failed';
+    t.error = 'Agent no longer exists';
+    emitTask(t);
+    return schedule(m);
+  }
   t.status = 'in_progress';
   t.startedAt = t.startedAt || now();
   const previous = t.output;
@@ -250,11 +325,13 @@ async function runTask(m, t) {
 
   const inputs = t.dependsOn
     .map((id) => state.tasks[id])
-    .map((d) => `### From ${getAgent(d.agentId).name} (${getAgent(d.agentId).role}): ${d.title}\n${clip(d.output, 4000)}`)
+    .map((d) => `### From ${getAgent(d.agentId)?.name}: ${d.title} (file: ${d.file || 'n/a'})\n${clip(d.output, 4000)}`)
     .join('\n\n');
+  const skill = t.skillId && state.skills[t.skillId];
   const revision = t.feedback
-    ? `\n\nThe CEO sent your previous version back. Feedback: ${t.feedback}\n\nPrevious version:\n${clip(previous, 4000)}\n\nDeliver an improved, complete version.`
+    ? `\n\nYour previous version was sent back. Feedback: ${t.feedback}\n\nPrevious version:\n${clip(previous, 4000)}\n\nDeliver an improved, complete version.`
     : '';
+  const workDir = `${m.folder}/${slugify(agent.name, 20)}`;
 
   try {
     await complete(
@@ -263,19 +340,22 @@ async function runTask(m, t) {
         messages: [
           {
             role: 'user',
-            content: `Assignment from Atlas (CEO)
+            content: `Assignment from ${ceo().name} (CEO)
 Company goal: ${m.goal}
 Your task: ${t.title}
 Brief: ${t.brief}
 Deliverable: ${t.deliverable}
 Deadline: ${fmt(t.deadline)} (now: ${fmt(now())})
-${inputs ? `\nInputs from teammates:\n${inputs}` : ''}${revision}
+Your folder in the shared workspace: ${workDir}/  (mission folder: ${m.folder}/)
+${skill ? `\nUse your skill "${skill.name}":\n${skill.body}\n` : ''}${inputs ? `\nInputs from teammates:\n${inputs}` : ''}${revision}
 
-Produce the complete deliverable now.`,
+Do the work now. Save any real artifacts (code, data, copy, assets) as files in your folder.
+Your final reply must be the complete deliverable in Markdown (it is filed automatically), ending
+with a short "Files" list of anything you saved.`,
           },
         ],
         effort: 'high',
-        tools: agent.tools || [],
+        tools: agent.tools,
         signal: signal(m),
         demo: () => demoOutput(t.agentId, t, m.goal),
       },
@@ -295,10 +375,12 @@ Produce the complete deliverable now.`,
       t.feedback = review.feedback;
       t.status = 'queued';
       addThread(m, { role: 'ceo', kind: 'review', taskId: t.id, text: `Sent **${t.title}** back to ${agent.name}: ${review.feedback}` });
+    } else if (state.settings.approveDeliverables) {
+      t.status = 'approval';
+      fileDeliverable(m, t);
+      addThread(m, { role: 'ceo', kind: 'review', taskId: t.id, text: `**${t.title}** passed my review and is waiting for your sign-off.` });
     } else {
-      t.status = 'done';
-      t.completedAt = now();
-      t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
+      finishTask(m, t);
     }
   } catch (e) {
     if (m.status === 'cancelled') return;
@@ -309,10 +391,44 @@ Produce the complete deliverable now.`,
   schedule(m);
 }
 
+function fileDeliverable(m, t) {
+  const agent = getAgent(t.agentId);
+  const n = String(m.taskIds.indexOf(t.id) + 1).padStart(2, '0');
+  t.file = `${m.folder}/${n}-${slugify(agent?.name || 'agent', 12)}-${slugify(t.title, 40)}.md`;
+  fs.mkdirSync(path.join(WORKSPACE, m.folder), { recursive: true });
+  fs.writeFileSync(path.join(WORKSPACE, t.file), `# ${t.title}\n\n_${agent?.name} · ${agent?.role} · ${now()}_\n\n${t.output}\n`);
+}
+
+function finishTask(m, t) {
+  t.status = 'done';
+  t.completedAt = now();
+  t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
+  fileDeliverable(m, t);
+  memorize(t, m).catch(() => {});
+  bus.emit('trigger', { event: 'task_completed', task: t });
+}
+
+/** Summarise finished work into the agent's long-term memory. */
+async function memorize(t, m) {
+  const text = await complete({
+    system: 'You write one-line memory notes for an AI teammate. Reply with the note only.',
+    messages: [
+      {
+        role: 'user',
+        content: `Write ONE line (max 35 words) the agent should remember from this finished task: key decisions, numbers or preferences worth reusing. Mention the product.\nProduct: ${m.goal}\nTask: ${t.title}\nDeliverable:\n${clip(t.output, 3000)}`,
+      },
+    ],
+    effort: 'low',
+    model: 'haiku',
+    demo: () => `Did "${t.title}" for "${m.goal}" — delivered ${t.late ? 'late' : 'on time'}.`,
+  });
+  remember(t.agentId, text.replace(/^[-*\s]+/, ''), `task:${t.id}`);
+}
+
 async function ceoReview(m, t) {
   const agent = getAgent(t.agentId);
   const raw = await complete({
-    system: systemPrompt(CEO),
+    system: systemPrompt(ceo()),
     messages: [
       {
         role: 'user',
@@ -346,27 +462,30 @@ async function report(m) {
   const tasks = missionTasks(m);
   const item = addThread(m, { role: 'ceo', kind: 'summary' });
   await streamInto(m, item, {
-    system: systemPrompt(CEO),
+    system: systemPrompt(ceo()),
     messages: [
       {
         role: 'user',
         content: `All delegated work for this mission is finished. Write the mission report for the founder.
 Goal: ${m.goal}
 Deadline: ${fmt(m.deadline)} — now ${fmt(now())}
+Workspace folder: ${m.folder}/
 
 ${tasks
-  .map((t) => `## ${t.title} — ${getAgent(t.agentId).name} [${t.status}${t.late ? ', LATE' : ''}${t.error ? `: ${t.error}` : ''}]\n${clip(t.output, 2500)}`)
+  .map((t) => `## ${t.title} — ${getAgent(t.agentId)?.name} [${t.status}${t.late ? ', LATE' : ''}${t.error ? `: ${t.error}` : ''}] file: ${t.file || '-'}\n${clip(t.output, 2500)}`)
   .join('\n\n')}
 
-Structure: a one-paragraph executive summary, the key decisions and assets produced (with owners),
-deadline performance, risks/gaps, and the next 3 moves. Be concise.`,
+Structure: a one-paragraph executive summary, the key decisions and assets produced (with owners
+and file paths), deadline performance, risks/gaps, and the next 3 moves. Be concise.`,
       },
     ],
     demo: () => demoSummary(m, tasks),
   });
+  fs.writeFileSync(path.join(WORKSPACE, m.folder, '00-mission-report.md'), `# Mission report: ${m.goal}\n\n${item.text}\n`);
   m.status = 'done';
   m.completedAt = now();
   emitMission(m);
+  bus.emit('trigger', { event: 'mission_completed', mission: m });
 }
 
 function fail(m, e) {
@@ -391,9 +510,7 @@ setInterval(() => {
       role: 'ceo',
       kind: 'escalation',
       taskId: t.id,
-      text: `⏰ **${getAgent(t.agentId).name}** missed the deadline for **${t.title}**. Escalating — this is now top priority.`,
+      text: `⏰ **${getAgent(t.agentId)?.name}** missed the deadline for **${t.title}**. Escalating — this is now top priority.`,
     });
   }
 }, 10_000).unref();
-
-export { SPECIALISTS };

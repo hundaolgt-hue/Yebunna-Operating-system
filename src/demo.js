@@ -1,6 +1,6 @@
 // Offline demo engine: scripted but plausible agent behaviour, streamed word by
 // word, so the OS can be explored without an API key.
-import { SPECIALISTS, getAgent } from './agents.js';
+import { specialists, getAgent } from './agents.js';
 
 const sleep = (ms, signal) =>
   new Promise((resolve, reject) => {
@@ -41,7 +41,7 @@ const DEPS = {
 
 export function demoPlan(goal, hoursLeft, instruction) {
   const pick = instruction
-    ? [SPECIALISTS.find((a) => instruction.toLowerCase().includes(a.name.toLowerCase()))?.id || 'marketing']
+    ? [specialists().find((a) => instruction.toLowerCase().includes(a.name.toLowerCase()))?.id || 'marketing']
     : Object.keys(PLAYBOOK);
   const tasks = pick.map((id) => {
     const [title, deliverable, pct] = PLAYBOOK[id];
@@ -114,4 +114,40 @@ We have a validated angle, a scoped MVP, a brand, a pricing model and a launch p
 export function demoChat(agentId, message) {
   const a = getAgent(agentId);
   return `${a.name} here (${a.role}). On "${message.slice(0, 80)}": my take is to start small, measure, and iterate weekly. In demo mode I can't think for real — log in to Claude Code and I'll give you a proper answer.`;
+}
+
+export function demoMeetingTurn(agentId, meeting, round) {
+  const a = getAgent(agentId);
+  const lines = {
+    ceo: `Let's keep this tight. Agenda: ${meeting.agenda}. I want each of you to give me your angle, one risk, and what you'd own.`,
+    research: `From the data: the audience is real and underserved. Risk — we're guessing at willingness to pay. I'll own a 10-interview validation sprint.`,
+    product: `I'd scope this to the smallest version that proves value. Risk is scope creep. I'll own the MVP spec.`,
+    engineer: `Technically this is a week of work if we stay on a boring stack. I'll own the build and a deploy checklist.`,
+    design: `Brand should feel calm and premium. I'll own the landing page and visual identity.`,
+    marketing: `Launch through communities first, then short video. I'll own launch copy and a 2-week content calendar.`,
+    sales: `Price anchor at $29 with a $19 launch offer. I'll own the pricing page and revenue model.`,
+    support: `I'll own onboarding emails and an FAQ so the first 100 buyers succeed.`,
+  };
+  return round > 1
+    ? `Building on what ${meeting.participants.filter((p) => p !== agentId).map((p) => getAgent(p)?.name).slice(0, 2).join(' and ')} said — agreed, and I can start today.`
+    : lines[agentId] || `${a.name} here: I can take a piece of this and deliver within the deadline.`;
+}
+
+export function demoMinutes(meeting) {
+  const items = meeting.participants
+    .filter((p) => p !== 'ceo')
+    .map((p) => ({ agent: p, title: `Follow-up from “${meeting.title}”`, brief: `Own your part of: ${meeting.agenda}`, deliverable: 'A short, concrete deliverable', due_in_hours: 6 }));
+  return JSON.stringify({
+    summary: `## Meeting minutes\n\n**Agenda:** ${meeting.agenda}\n\nThe team aligned on a lean plan. Everyone owns one concrete next step.`,
+    decisions: ['Ship the smallest valuable version first', 'Validate pricing with real buyers'],
+    action_items: items,
+  });
+}
+
+export function demoSkill(name) {
+  return JSON.stringify({
+    name,
+    summary: `Repeatable process for: ${name}.`,
+    body: `**When to use:** whenever this workflow is needed.\n\n**Steps**\n1. Open the source.\n2. Collect the required information.\n3. Produce the output in the agreed format.\n\n**Decision rules**\n- If data is missing, flag it instead of guessing.\n\n**Output requirements**\n- A Markdown summary saved to the workspace.\n\n**Approval boundaries**\n- Ask the founder before sending, publishing, buying or deleting anything.`,
+  });
 }

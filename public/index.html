@@ -24,21 +24,19 @@
         </a>
 
         <nav class="nav">
-          <a href="#/" data-nav="home">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 12l8-8 8 8M6 10v10h12V10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-            Command center
-          </a>
-          <a href="#/board" data-nav="board">
-            <svg viewBox="0 0 24 24" width="18" height="18"><rect x="3" y="4" width="5" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="10" y="4" width="5" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="17" y="4" width="4" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-            Task board
-          </a>
-          <a href="#/team" data-nav="team">
-            <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="9" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.8a3.5 3.5 0 010 6.4M18 14.8c1.9.8 3.1 2.6 3.5 5.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            Team
-          </a>
+          <a href="#/" data-nav="home"><span class="ni">⌂</span>Command center</a>
+          <a href="#/meetings" data-nav="meetings"><span class="ni">👥</span>Meetings<span class="badge" hidden></span></a>
+          <a href="#/board" data-nav="board"><span class="ni">▦</span>Task board<span class="badge" hidden></span></a>
+          <a href="#/skills" data-nav="skills"><span class="ni">🧩</span>Skills</a>
+          <a href="#/routines" data-nav="routines"><span class="ni">⏰</span>Routines</a>
+          <a href="#/files" data-nav="files"><span class="ni">📁</span>Files</a>
+          <a href="#/team" data-nav="team"><span class="ni">✦</span>Team</a>
+          <a href="#/settings" data-nav="settings"><span class="ni">⚙</span>Settings</a>
         </nav>
 
         <div class="history">
+          <div class="history-title">Bots</div>
+          <div id="bot-list" class="bot-list"></div>
           <div class="history-title">Missions</div>
           <div id="mission-list"></div>
         </div>

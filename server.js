@@ -1,34 +1,76 @@
 // Yebunna OS — HTTP server. Zero dependencies: Node's http module, a JSON API,
 // Server-Sent Events for live updates, and the static UI in /public.
 import http from 'node:http';
-import fs from 'node:fs/promises';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENTS, getAgent, publicAgent, systemPrompt } from './src/agents.js';
-import { state, save } from './src/store.js';
+import { allAgents, getAgent, publicAgent, systemPrompt, createAgent, deleteAgent, remember, forget } from './src/agents.js';
+import { state, save, now, WORKSPACE } from './src/store.js';
 import { providerInfo, streamChat, detectionReport } from './src/llm.js';
 import { demoChat } from './src/demo.js';
-import { bus, createMission, sendToMission, cancelMission, deleteMission, resumeAll } from './src/orchestrator.js';
+import {
+  bus,
+  createMission,
+  createMissionWithTasks,
+  sendToMission,
+  cancelMission,
+  deleteMission,
+  resumeAll,
+  approvePlan,
+  decideTask,
+} from './src/orchestrator.js';
+import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
+import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill } from './src/skills.js';
+import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
-const TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.pdf': 'application/pdf',
+  '.ico': 'image/x-icon',
+};
+const TEXT = /\.(md|txt|json|csv|tsv|js|mjs|ts|tsx|jsx|py|html|css|scss|yml|yaml|toml|sh|sql|xml|env|ini|log)$/i;
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+const need = (cond, status, msg) => {
+  if (!cond) throw new HttpError(status, msg);
+};
 
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
 }
 
-async function readBody(req) {
-  let raw = '';
+async function readBody(req, limit = 1e6) {
+  const chunks = [];
+  let size = 0;
   for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > 1e6) throw Object.assign(new Error('Body too large'), { status: 413 });
+    size += chunk.length;
+    if (size > limit) throw new HttpError(413, 'Request too large');
+    chunks.push(chunk);
   }
+  const raw = Buffer.concat(chunks).toString('utf8');
   try {
     return raw ? JSON.parse(raw) : {};
   } catch {
-    throw Object.assign(new Error('Invalid JSON'), { status: 400 });
+    throw new HttpError(400, 'Invalid JSON');
   }
 }
 
@@ -37,12 +79,53 @@ function sse(res) {
   return (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+const futureDeadline = (deadline) => {
+  const due = Date.parse(deadline);
+  need(Number.isFinite(due) && due > Date.now() + 60_000, 400, 'deadline must be in the future');
+  return new Date(due).toISOString();
+};
+const get = (coll, id, what) => {
+  const item = state[coll][id];
+  need(item, 404, `${what} not found`);
+  return item;
+};
+const inWorkspace = (rel) => {
+  const file = path.resolve(WORKSPACE, String(rel || ''));
+  need(file === WORKSPACE || file.startsWith(WORKSPACE + path.sep), 403, 'outside the workspace');
+  return file;
+};
+
+function walk(dir, base = '', out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (out.length > 3000) break;
+    const rel = base ? `${base}/${entry.name}` : entry.name;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === '.git') continue;
+      walk(full, rel, out);
+    } else {
+      const st = fs.statSync(full);
+      out.push({ path: rel, size: st.size, mtime: st.mtime.toISOString() });
+    }
+  }
+  return out;
+}
+
 const routes = {
+  // ---- meta & live events ----
   'GET /api/meta': (req, res) =>
-    send(res, 200, { provider: providerInfo(), agents: AGENTS.map(publicAgent) }),
+    send(res, 200, { provider: providerInfo(), agents: allAgents().map(publicAgent), workspace: WORKSPACE }),
 
   'GET /api/state': (req, res) =>
-    send(res, 200, { missions: Object.values(state.missions), tasks: Object.values(state.tasks) }),
+    send(res, 200, {
+      missions: Object.values(state.missions),
+      tasks: Object.values(state.tasks),
+      meetings: Object.values(state.meetings),
+      skills: Object.values(state.skills),
+      routines: Object.values(state.routines),
+      memory: state.memory,
+      settings: state.settings,
+    }),
 
   'GET /api/events': (req, res) => {
     const write = sse(res);
@@ -55,71 +138,138 @@ const routes = {
     });
   },
 
-  'POST /api/missions': async (req, res) => {
-    const { goal, deadline } = await readBody(req);
-    if (!goal?.trim()) return send(res, 400, { error: 'goal is required' });
-    const due = Date.parse(deadline);
-    if (!Number.isFinite(due) || due < Date.now() + 60_000) return send(res, 400, { error: 'deadline must be in the future' });
-    send(res, 201, createMission({ goal: goal.trim(), deadline: new Date(due).toISOString() }));
+  'GET /api/settings': (req, res) => send(res, 200, state.settings),
+  'PUT /api/settings': async (req, res) => {
+    const body = await readBody(req);
+    for (const k of ['approvePlans', 'approveDeliverables']) if (k in body) state.settings[k] = Boolean(body[k]);
+    save();
+    bus.emit('event', { type: 'settings', settings: state.settings });
+    send(res, 200, state.settings);
   },
 
+  // ---- missions ----
+  'POST /api/missions': async (req, res) => {
+    const { goal, deadline } = await readBody(req);
+    need(goal?.trim(), 400, 'goal is required');
+    send(res, 201, createMission({ goal: goal.trim(), deadline: futureDeadline(deadline) }));
+  },
   'POST /api/missions/:id/messages': async (req, res, { id }) => {
-    const m = state.missions[id];
-    if (!m) return send(res, 404, { error: 'mission not found' });
+    const m = get('missions', id, 'mission');
     const { text, mode } = await readBody(req);
-    if (!text?.trim()) return send(res, 400, { error: 'text is required' });
-    if (m.status === 'planning') return send(res, 409, { error: 'The CEO is still planning — try again in a moment.' });
+    need(text?.trim(), 400, 'text is required');
+    need(m.status !== 'planning', 409, 'The CEO is still planning — try again in a moment.');
     if (m.status === 'cancelled') m.status = 'done';
     sendToMission(m, { text: text.trim(), mode: mode === 'ask' ? 'ask' : 'delegate' });
     send(res, 202, { ok: true });
   },
-
+  'POST /api/missions/:id/approve': (req, res, { id }) => {
+    approvePlan(get('missions', id, 'mission'));
+    send(res, 200, { ok: true });
+  },
   'POST /api/missions/:id/cancel': (req, res, { id }) => {
-    const m = state.missions[id];
-    if (!m) return send(res, 404, { error: 'mission not found' });
-    cancelMission(m);
+    cancelMission(get('missions', id, 'mission'));
     send(res, 200, { ok: true });
   },
-
   'DELETE /api/missions/:id': (req, res, { id }) => {
-    const m = state.missions[id];
-    if (!m) return send(res, 404, { error: 'mission not found' });
-    deleteMission(m);
+    deleteMission(get('missions', id, 'mission'));
     send(res, 200, { ok: true });
   },
 
-  'GET /api/chats/:agentId': (req, res, { agentId }) => send(res, 200, state.chats[agentId] || []),
+  // ---- tasks ----
+  'POST /api/tasks/:id/decision': async (req, res, { id }) => {
+    const t = get('tasks', id, 'task');
+    const { approve, feedback } = await readBody(req);
+    need(t.status === 'approval', 409, 'This task is not waiting for your approval.');
+    decideTask(t, { approve: Boolean(approve), feedback });
+    send(res, 200, { ok: true });
+  },
+  'POST /api/tasks/:id/skill': (req, res, { id }) => {
+    const t = get('tasks', id, 'task');
+    need(t.output, 400, 'This task has no output yet.');
+    send(res, 202, skillFromTask(t));
+  },
 
+  // ---- agents / bots ----
+  'POST /api/agents': async (req, res) => {
+    const body = await readBody(req);
+    need(body.name?.trim() && body.role?.trim(), 400, 'name and main job are required');
+    const a = createAgent(body);
+    bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
+    send(res, 201, publicAgent(a));
+  },
+  'DELETE /api/agents/:id': (req, res, { id }) => {
+    need(deleteAgent(id), 400, 'Only bots you created can be deleted.');
+    bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
+    send(res, 200, { ok: true });
+  },
+  'POST /api/agents/:id/assign': async (req, res, { id }) => {
+    const agent = getAgent(id);
+    need(agent && id !== 'ceo', 404, 'Pick a bot to assign to (the CEO delegates missions instead).');
+    const { title, instructions, deadlineHours = 4, skillId } = await readBody(req);
+    need(title?.trim(), 400, 'title is required');
+    const hours = Math.max(0.1, Number(deadlineHours) || 4);
+    send(
+      res,
+      201,
+      createMissionWithTasks({
+        goal: title.trim(),
+        deadline: new Date(Date.now() + hours * 36e5).toISOString(),
+        specs: [{ agent: id, title: title.trim(), brief: instructions || title, deliverable: 'The finished work', due_in_hours: hours, skillId }],
+        intro: `Assigned directly to **${agent.name}** — due in ${hours}h.`,
+      }),
+    );
+  },
+  'POST /api/agents/:id/memory': async (req, res, { id }) => {
+    need(getAgent(id), 404, 'agent not found');
+    const { text } = await readBody(req);
+    need(text?.trim(), 400, 'text is required');
+    const entry = remember(id, text, 'founder');
+    bus.emit('event', { type: 'memory', agentId: id, memory: state.memory[id] });
+    send(res, 201, entry);
+  },
+  'DELETE /api/agents/:id/memory/:memId': (req, res, { id, memId }) => {
+    forget(id, memId);
+    bus.emit('event', { type: 'memory', agentId: id, memory: state.memory[id] || [] });
+    send(res, 200, { ok: true });
+  },
+
+  // ---- 1:1 chat with any bot, streamed back as SSE ----
+  'GET /api/chats/:agentId': (req, res, { agentId }) => send(res, 200, state.chats[agentId] || []),
   'DELETE /api/chats/:agentId': (req, res, { agentId }) => {
     delete state.chats[agentId];
     save();
     send(res, 200, { ok: true });
   },
-
-  // Direct 1:1 chat with any agent, streamed back as SSE.
   'POST /api/chats/:agentId': async (req, res, { agentId }) => {
     const agent = getAgent(agentId);
-    if (!agent) return send(res, 404, { error: 'agent not found' });
+    need(agent, 404, 'agent not found');
     const { text } = await readBody(req);
-    if (!text?.trim()) return send(res, 400, { error: 'text is required' });
+    need(text?.trim(), 400, 'text is required');
+
+    // "Remember …" saves straight to the bot's memory.
+    const rememberMatch = text.trim().match(/^(?:please\s+)?remember(?:\s+that)?[:,]?\s+(.+)/is);
+    if (rememberMatch) {
+      remember(agentId, rememberMatch[1], 'chat');
+      bus.emit('event', { type: 'memory', agentId, memory: state.memory[agentId] });
+    }
 
     const history = (state.chats[agentId] ||= []);
-    history.push({ role: 'user', content: text.trim(), at: new Date().toISOString() });
+    history.push({ role: 'user', content: text.trim(), at: now() });
     const write = sse(res);
     const abort = new AbortController();
     res.on('close', () => abort.abort());
 
-    const reply = { role: 'assistant', content: '', reasoning: '', at: new Date().toISOString() };
+    const reply = { role: 'assistant', content: '', reasoning: '', at: now() };
     try {
       const work = Object.values(state.tasks)
         .filter((t) => t.agentId === agentId && t.status !== 'failed')
         .slice(-5)
-        .map((t) => `- ${t.title} [${t.status}] due ${t.deadline}`)
+        .map((t) => `- ${t.title} [${t.status}] due ${t.deadline}${t.file ? ` (file: ${t.file})` : ''}`)
         .join('\n');
       for await (const ev of streamChat({
-        system: `${systemPrompt(agent)}\n\nYou are chatting 1:1 with the founder.${work ? `\nYour recent assignments:\n${work}` : ''}`,
+        system: `${systemPrompt(agent)}\n\nYou are chatting 1:1 with the founder.${work ? `\nYour recent assignments:\n${work}` : ''}${rememberMatch ? '\nThe founder just asked you to remember something; it is saved to your memory — confirm briefly.' : ''}`,
         messages: history.slice(-20).map(({ role, content }) => ({ role, content })),
-        tools: agent.tools || [],
+        tools: agent.tools,
         signal: abort.signal,
         demo: () => demoChat(agentId, text),
       })) {
@@ -136,6 +286,99 @@ const routes = {
     save();
     res.end();
   },
+
+  // ---- team meetings & standups ----
+  'POST /api/meetings': async (req, res) => {
+    const body = await readBody(req);
+    need(Array.isArray(body.participants) && body.participants.length, 400, 'Pick at least one bot to invite.');
+    send(res, 201, startMeeting(body));
+  },
+  'POST /api/meetings/:id/messages': async (req, res, { id }) => {
+    const mt = get('meetings', id, 'meeting');
+    const { text } = await readBody(req);
+    need(text?.trim(), 400, 'text is required');
+    try {
+      addFounderMessage(mt, text.trim());
+    } catch (e) {
+      throw new HttpError(409, e.message);
+    }
+    send(res, 202, { ok: true });
+  },
+  'POST /api/meetings/:id/launch': (req, res, { id }) => {
+    try {
+      send(res, 201, launchActionItems(get('meetings', id, 'meeting')));
+    } catch (e) {
+      throw e instanceof HttpError ? e : new HttpError(400, e.message);
+    }
+  },
+  'DELETE /api/meetings/:id': (req, res, { id }) => {
+    deleteMeeting(get('meetings', id, 'meeting'));
+    send(res, 200, { ok: true });
+  },
+
+  // ---- skills & watch-and-learn ----
+  'POST /api/skills': async (req, res) => {
+    const body = await readBody(req);
+    need(body.name?.trim(), 400, 'name is required');
+    send(res, 201, createSkill({ ...body, status: body.status || 'active' }));
+  },
+  'PUT /api/skills/:id': async (req, res, { id }) => send(res, 200, updateSkill(get('skills', id, 'skill'), await readBody(req))),
+  'DELETE /api/skills/:id': (req, res, { id }) => {
+    deleteSkill(get('skills', id, 'skill'));
+    send(res, 200, { ok: true });
+  },
+  'POST /api/skills/:id/run': async (req, res, { id }) => {
+    const s = get('skills', id, 'skill');
+    try {
+      send(res, 201, runSkill(s, await readBody(req)));
+    } catch (e) {
+      throw new HttpError(400, e.message);
+    }
+  },
+  'POST /api/teach': async (req, res) => {
+    const body = await readBody(req, 60e6);
+    try {
+      send(res, 202, teachSkill(body));
+    } catch (e) {
+      throw new HttpError(400, e.message);
+    }
+  },
+
+  // ---- routines ----
+  'POST /api/routines': async (req, res) => {
+    try {
+      send(res, 201, createRoutine(await readBody(req)));
+    } catch (e) {
+      throw e instanceof HttpError ? e : new HttpError(400, e.message);
+    }
+  },
+  'PUT /api/routines/:id': async (req, res, { id }) => {
+    const r = get('routines', id, 'routine');
+    try {
+      send(res, 200, updateRoutine(r, await readBody(req)));
+    } catch (e) {
+      throw e instanceof HttpError ? e : new HttpError(400, e.message);
+    }
+  },
+  'POST /api/routines/:id/run': (req, res, { id }) => send(res, 200, fireRoutine(get('routines', id, 'routine'), 'run now')),
+  'DELETE /api/routines/:id': (req, res, { id }) => {
+    deleteRoutine(get('routines', id, 'routine'));
+    send(res, 200, { ok: true });
+  },
+
+  // ---- shared workspace files ----
+  'GET /api/files': (req, res) => send(res, 200, { root: WORKSPACE, files: walk(WORKSPACE) }),
+  'GET /api/file': async (req, res) => {
+    const url = new URL(req.url, 'http://x');
+    const file = inWorkspace(url.searchParams.get('path'));
+    const st = await fsp.stat(file).catch(() => null);
+    need(st?.isFile(), 404, 'file not found');
+    const ext = path.extname(file).toLowerCase();
+    const headers = { 'content-type': TEXT.test(file) ? 'text/plain; charset=utf-8' : TYPES[ext] || 'application/octet-stream' };
+    if (url.searchParams.get('download')) headers['content-disposition'] = `attachment; filename="${path.basename(file).replace(/"/g, '')}"`;
+    res.writeHead(200, headers);
+    fs.createReadStream(file).pipe(res);
+  },
 };
 
 const compiled = Object.entries(routes).map(([key, handler]) => {
@@ -151,13 +394,12 @@ async function serveStatic(req, res) {
   const file = path.resolve(PUBLIC, rel);
   if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, { error: 'forbidden' });
   try {
-    const body = await fs.readFile(file);
+    const body = await fsp.readFile(file);
     res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
     res.end(body);
   } catch {
-    // SPA fallback
-    const body = await fs.readFile(path.join(PUBLIC, 'index.html'));
-    res.writeHead(200, { 'content-type': 'text/html' });
+    const body = await fsp.readFile(path.join(PUBLIC, 'index.html'));
+    res.writeHead(200, { 'content-type': TYPES['.html'] });
     res.end(body);
   }
 }
@@ -175,15 +417,18 @@ const server = http.createServer(async (req, res) => {
     if (pathname.startsWith('/api/')) return send(res, 404, { error: 'not found' });
     await serveStatic(req, res);
   } catch (e) {
+    if (!e.status) console.error(e);
     if (!res.headersSent) send(res, e.status || 500, { error: e.message });
     else res.end();
   }
 });
 
 resumeAll();
+resumeMeetings();
 server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);
+  console.log(`Shared workspace: ${WORKSPACE}`);
   if (p.name !== 'demo') return console.log(`Engine: Claude via Claude Code ${p.cli} — model: ${p.model}`);
   console.log('Engine: offline demo (install Claude Code and run `claude` once to log in with your subscription)');
   const tried = detectionReport();

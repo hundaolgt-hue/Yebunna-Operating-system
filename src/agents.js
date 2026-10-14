@@ -1,5 +1,6 @@
-// The company roster. Each agent has a persona, a specialty and a system prompt.
-// The CEO is special: it plans, delegates with deadlines, reviews and reports.
+// The company roster: built-in agents plus any bots created in the UI. Each has a
+// persona, specialties, a toolset, its own memory and its own skills.
+import { state, save, newId, now } from './store.js';
 
 const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products
 (SaaS tools, templates, courses, ebooks, apps, Notion kits, design assets, communities).
@@ -7,10 +8,12 @@ You are part of a team of AI agents run by a CEO who delegates work with hard de
 Be concrete, decisive and practical. Produce real, usable work — not descriptions of work.
 Use Markdown: short headings, bullet lists, tables where useful, and code blocks for code.`;
 
-// Agents with live web access (like Grok's real-time search), via Claude Code tools.
+// Every agent can read and write files in the shared workspace (Grok Bot's shared
+// cloud computer). Some also get live web access, like Grok's real-time search.
+const FILES = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 const WEB = ['WebSearch', 'WebFetch'];
 
-export const AGENTS = [
+const BUILTIN = [
   {
     id: 'ceo',
     name: 'Atlas',
@@ -23,7 +26,7 @@ with crisp, honest summaries. You are direct, a little witty, and allergic to fl
   },
   {
     id: 'research',
-    tools: WEB,
+    tools: [...FILES, ...WEB],
     name: 'Nova',
     role: 'Market Research Analyst',
     color: '#60a5fa',
@@ -61,7 +64,7 @@ typography, wireframes described precisely, user flows and design-system tokens 
   },
   {
     id: 'marketing',
-    tools: WEB,
+    tools: [...FILES, ...WEB],
     name: 'Echo',
     role: 'Growth Marketer',
     color: '#fbbf24',
@@ -71,7 +74,7 @@ calendars, SEO keyword maps, social posts and ad variations. Every plan has chan
   },
   {
     id: 'sales',
-    tools: WEB,
+    tools: [...FILES, ...WEB],
     name: 'Ledger',
     role: 'Revenue & Finance Lead',
     color: '#fb923c',
@@ -90,28 +93,102 @@ FAQs, support macros and lifecycle emails, and set up feedback loops that feed t
   },
 ];
 
-const byId = new Map(AGENTS.map((a) => [a.id, a]));
+// Built-ins without explicit tools get file access only.
+for (const a of BUILTIN) a.tools ||= a.id === 'ceo' ? ['Read', 'Glob', 'Grep'] : FILES;
 
-export function getAgent(id) {
-  return byId.get(id);
+const COLORS = ['#c084fc', '#2dd4bf', '#f87171', '#a3e635', '#818cf8', '#fda4af', '#facc15', '#38bdf8'];
+
+export function allAgents() {
+  return [...BUILTIN, ...Object.values(state.customAgents)];
 }
 
-export const SPECIALISTS = AGENTS.filter((a) => a.id !== 'ceo');
+export function getAgent(id) {
+  return allAgents().find((a) => a.id === id);
+}
+
+export function specialists() {
+  return allAgents().filter((a) => a.id !== 'ceo');
+}
+
+/** Create a new bot: pick a name, a main job and a description (Grok Bot's "create your own"). */
+export function createAgent({ name, role, description, specialties = [], web = false }) {
+  const id = newId('bot');
+  const agent = {
+    id,
+    name: String(name).slice(0, 40),
+    role: String(role).slice(0, 80),
+    color: COLORS[Object.keys(state.customAgents).length % COLORS.length],
+    specialties: specialties.map(String).filter(Boolean).slice(0, 6),
+    persona: `You are ${name}, the team's ${role}. ${description || ''}`.trim(),
+    tools: web ? [...FILES, ...WEB] : FILES,
+    custom: true,
+    createdAt: now(),
+  };
+  state.customAgents[id] = agent;
+  save();
+  return agent;
+}
+
+export function deleteAgent(id) {
+  if (!state.customAgents[id]) return false;
+  delete state.customAgents[id];
+  delete state.memory[id];
+  save();
+  return true;
+}
+
+// ---- memory ---------------------------------------------------------------
+
+export function remember(agentId, text, source = 'manual') {
+  const list = (state.memory[agentId] ||= []);
+  const entry = { id: newId('mem'), text: String(text).trim().slice(0, 600), source, at: now() };
+  list.push(entry);
+  if (list.length > 60) list.splice(0, list.length - 60);
+  save();
+  return entry;
+}
+
+export function forget(agentId, memId) {
+  state.memory[agentId] = (state.memory[agentId] || []).filter((m) => m.id !== memId);
+  save();
+}
+
+// ---- prompts --------------------------------------------------------------
+
+export function agentSkills(agentId) {
+  return Object.values(state.skills).filter((s) => s.status === 'active' && (s.agentId === agentId || s.agentId === 'any'));
+}
 
 export function roster() {
-  return AGENTS.map((a) => `- ${a.id}: ${a.name}, ${a.role} — ${a.specialties.join(', ')}`).join('\n');
+  return allAgents()
+    .map((a) => {
+      const skills = agentSkills(a.id).map((s) => s.name);
+      return `- ${a.id}: ${a.name}, ${a.role} — ${a.specialties.join(', ')}${skills.length ? ` | skills: ${skills.join(', ')}` : ''}`;
+    })
+    .join('\n');
 }
 
 export function systemPrompt(agent) {
+  const memory = (state.memory[agent.id] || []).slice(-15);
+  const skills = agentSkills(agent.id).slice(-6);
   return `${agent.persona}
 
 ${COMPANY}
-${agent.tools ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}
+${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}
+Your current directory is the company's shared workspace. Teammates' files live there too
+(missions/<mission>/...). Read them when useful. Save real artifacts you create (code, copy, data,
+docs) as files in the folder your assignment names. Never touch files outside the workspace.
+
 Your team (id: name, role — specialties):
-${roster()}`;
+${roster()}
+${memory.length ? `\nYour memory (preferences and summaries of past work — verify changing facts at the source):\n${memory.map((m) => `- ${m.text}`).join('\n')}\n` : ''}${
+    skills.length
+      ? `\nYour skills (follow the matching skill's steps, rules and approval boundaries when it applies):\n${skills.map((s) => `### Skill: ${s.name}\n${s.summary}\n${s.body}`).join('\n\n')}\n`
+      : ''
+  }`;
 }
 
 export function publicAgent(a) {
-  const { id, name, role, color, specialties, tools = [] } = a;
-  return { id, name, role, color, specialties, web: tools.length > 0 };
+  const { id, name, role, color, specialties, tools = [], custom = false } = a;
+  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), custom, persona: a.persona };
 }

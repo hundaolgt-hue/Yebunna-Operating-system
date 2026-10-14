@@ -1,5 +1,5 @@
 // Tiny JSON-file persistence. Everything lives in memory and is flushed to disk
-// shortly after each change, so missions survive restarts.
+// shortly after each change, so missions, memory, skills and routines survive restarts.
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -7,10 +7,27 @@ import { randomUUID } from 'node:crypto';
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const FILE = path.join(DATA_DIR, 'state.json');
 
-export const state = { missions: {}, tasks: {}, chats: {} };
+// The shared cloud-computer equivalent: a real folder every agent works in.
+export const WORKSPACE = path.resolve(process.env.WORKSPACE_DIR || path.join(process.cwd(), 'workspace'));
+fs.mkdirSync(WORKSPACE, { recursive: true });
+
+export const state = {
+  missions: {},
+  tasks: {},
+  chats: {},
+  memory: {}, // agentId -> [{ id, text, source, at }]
+  skills: {}, // id -> skill
+  routines: {}, // id -> routine
+  meetings: {}, // id -> meeting
+  customAgents: {}, // id -> agent created in the UI
+  settings: { approvePlans: false, approveDeliverables: false },
+};
 
 try {
-  Object.assign(state, JSON.parse(fs.readFileSync(FILE, 'utf8')));
+  const saved = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+  for (const key of Object.keys(state)) {
+    if (saved[key]) state[key] = key === 'settings' ? { ...state.settings, ...saved.settings } : saved[key];
+  }
 } catch {
   // first run — nothing saved yet
 }
@@ -28,3 +45,10 @@ export function save() {
 }
 
 export const newId = (prefix) => `${prefix}_${randomUUID().slice(0, 8)}`;
+export const now = () => new Date().toISOString();
+export const slugify = (s, n = 40) =>
+  String(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, n) || 'untitled';
