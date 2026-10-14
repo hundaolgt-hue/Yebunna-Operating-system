@@ -395,11 +395,12 @@ async function serveStatic(req, res) {
   if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, { error: 'forbidden' });
   try {
     const body = await fsp.readFile(file);
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    // no-cache: after a `git pull` the browser always picks up the new UI.
+    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
     res.end(body);
   } catch {
     const body = await fsp.readFile(path.join(PUBLIC, 'index.html'));
-    res.writeHead(200, { 'content-type': TYPES['.html'] });
+    res.writeHead(200, { 'content-type': TYPES['.html'], 'cache-control': 'no-cache' });
     res.end(body);
   }
 }

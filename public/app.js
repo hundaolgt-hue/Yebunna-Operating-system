@@ -222,6 +222,18 @@ $('#open-sidebar').addEventListener('click', () => $('#sidebar').classList.add('
 $('#close-sidebar').addEventListener('click', () => $('#sidebar').classList.remove('open'));
 window.addEventListener('hashchange', route);
 
+// "New mission" / "Command center": always land on a fresh, focused mission box —
+// even when already on the home page (where the link alone would do nothing).
+$$('.new-btn, [data-nav="home"]').forEach((a) =>
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    $('#sidebar').classList.remove('open');
+    if (location.hash === '#/' || location.hash === '') route();
+    else location.hash = '#/';
+    requestAnimationFrame(() => $('#view textarea')?.focus());
+  }),
+);
+
 (async function boot() {
   const meta = await api('/api/meta');
   S.provider = meta.provider;
