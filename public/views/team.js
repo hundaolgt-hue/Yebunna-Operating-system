@@ -13,6 +13,7 @@ export function renderTeam() {
   </div>`;
   $('[data-new-bot]', view()).addEventListener('click', () => newBotDialog());
   $$('[data-assign]', view()).forEach((b) => b.addEventListener('click', () => assignDialog(b.dataset.assign)));
+  $$('[data-edit-bot]', view()).forEach((b) => b.addEventListener('click', () => editBotDialog(b.dataset.editBot)));
 }
 
 function agentCard(a) {
@@ -30,7 +31,7 @@ function agentCard(a) {
     <div class="tags">${a.specialties.map((s) => `<span class="tag-s">${esc(s)}</span>`).join('')}</div>
     <div class="stats">${[0, 2, 4].map((i) => `<div><b>${stat[i]}</b><span>${stat[i + 1]}</span></div>`).join('')}</div>
     <div class="now">${current ? `<span class="dot running inline"></span>Working on: ${esc(current.title)}` : `<span style="color:var(--faint)">Available · ${(S.memory[a.id] || []).length} memories</span>`}</div>
-    <div class="send-row"><a class="btn" href="#/chat/${a.id}">Open</a>${a.id !== 'ceo' ? `<button class="btn-ghost" data-assign="${a.id}">Assign task</button>` : ''}</div>
+    <div class="send-row"><a class="btn" href="#/chat/${a.id}">Open</a><button class="btn-ghost" data-edit-bot="${a.id}">✎ Edit</button>${a.id !== 'ceo' ? `<button class="btn-ghost" data-assign="${a.id}">Assign</button>` : ''}</div>
   </div>`;
 }
 
@@ -77,6 +78,52 @@ export function newBotDialog() {
   );
 }
 
+/** Edit any bot's name, role, responsibilities/personality, specialties and web access. */
+export function editBotDialog(agentId) {
+  const a = S.agentById[agentId];
+  const isCeo = agentId === 'ceo';
+  openDialog(
+    `Edit ${a.name}`,
+    `<form class="form" data-form>
+      <div class="grid2">
+        <label>Name<input name="name" required maxlength="40" value="${esc(a.name)}" /></label>
+        <label>Role / main job<input name="role" required maxlength="80" value="${esc(a.role)}" /></label>
+      </div>
+      <label>Responsibilities & personality <small>(this is the bot's core instruction — what it owns, how it works, its tone)</small>
+        <textarea name="persona" rows="8">${esc(a.persona || '')}</textarea></label>
+      <label>Specialties <small>(comma separated — the CEO uses these to decide who gets which task)</small>
+        <input name="specialties" value="${esc(a.specialties.join(', '))}" /></label>
+      <label class="check"><input type="checkbox" name="web" ${a.web ? 'checked' : ''} /> Can search the web</label>
+      ${isCeo ? '<p class="faint small" style="margin:0">The CEO keeps its planning, delegation and review duties whatever you write here.</p>' : ''}
+      <div class="row-btns end">
+        ${a.edited ? '<button type="button" class="btn-ghost" data-reset>Reset to default</button>' : ''}
+        <button class="btn" type="submit">Save changes</button>
+      </div>
+    </form>`,
+    (dlg, close) => {
+      const form = $('[data-form]', dlg);
+      // Renaming a bot also renames it inside its instructions ("You are Nova…").
+      let prevName = a.name;
+      form.elements.name.addEventListener('input', () => {
+        const next = form.elements.name.value.trim();
+        if (prevName && next) form.elements.persona.value = form.elements.persona.value.split(prevName).join(next);
+        prevName = next || prevName;
+      });
+      $('[data-reset]', dlg)?.addEventListener('click', async () => {
+        if (!confirm(`Reset ${a.name} to its original role and instructions?`)) return;
+        await api(`/api/agents/${agentId}/reset`, { method: 'POST' }).catch((e) => toast(e.message));
+        close();
+        toast('Bot reset to default.');
+      });
+      onSubmit(form, async (d) => {
+        const updated = await api(`/api/agents/${agentId}`, { method: 'PUT', body: d });
+        close();
+        toast(`${updated.name} updated — new tasks use the new role.`);
+      });
+    },
+  );
+}
+
 export function assignDialog(agentId) {
   const a = S.agentById[agentId];
   const skills = Object.values(S.skills).filter((s) => s.status === 'active' && (s.agentId === agentId || s.agentId === 'any'));
@@ -115,6 +162,7 @@ export async function renderAgent(agentId) {
   v.innerHTML = `
     <div class="topbar">${avatar(agentId)}<h2>${esc(a.name)} <span class="muted-title">· ${esc(a.role)}</span></h2>
       <div class="meta">
+        <button class="btn-ghost" data-edit-bot>✎ Edit role</button>
         ${agentId !== 'ceo' ? '<button class="btn-ghost" data-assign>Assign task</button>' : ''}
         <button class="btn-ghost" data-clear>Clear chat</button>
         ${a.custom ? '<button class="btn-ghost danger" data-del-bot>Delete bot</button>' : ''}
@@ -153,6 +201,7 @@ export async function renderAgent(agentId) {
   scroll.scrollTop = scroll.scrollHeight;
 
   $('[data-assign]', v)?.addEventListener('click', () => assignDialog(agentId));
+  $('[data-edit-bot]', v).addEventListener('click', () => editBotDialog(agentId));
   $('[data-clear]', v).addEventListener('click', async () => {
     await api(`/api/chats/${agentId}`, { method: 'DELETE' });
     S.chats[agentId] = [];

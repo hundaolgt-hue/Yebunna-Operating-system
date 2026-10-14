@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { allAgents, getAgent, publicAgent, systemPrompt, createAgent, deleteAgent, remember, forget } from './src/agents.js';
+import { allAgents, getAgent, publicAgent, systemPrompt, createAgent, updateAgent, resetAgent, deleteAgent, remember, forget } from './src/agents.js';
 import { state, save, now, WORKSPACE } from './src/store.js';
 import { providerInfo, streamChat, detectionReport } from './src/llm.js';
 import { demoChat } from './src/demo.js';
@@ -196,6 +196,17 @@ const routes = {
     const a = createAgent(body);
     bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
     send(res, 201, publicAgent(a));
+  },
+  'PUT /api/agents/:id': async (req, res, { id }) => {
+    const a = updateAgent(id, await readBody(req));
+    need(a, 404, 'agent not found');
+    bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
+    send(res, 200, publicAgent(a));
+  },
+  'POST /api/agents/:id/reset': (req, res, { id }) => {
+    need(resetAgent(id), 400, 'This bot has no edits to reset.');
+    bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
+    send(res, 200, publicAgent(getAgent(id)));
   },
   'DELETE /api/agents/:id': (req, res, { id }) => {
     need(deleteAgent(id), 400, 'Only bots you created can be deleted.');

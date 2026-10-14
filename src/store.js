@@ -20,6 +20,7 @@ export const state = {
   routines: {}, // id -> routine
   meetings: {}, // id -> meeting
   customAgents: {}, // id -> agent created in the UI
+  agentOverrides: {}, // id -> edits to a built-in agent (name, role, persona, specialties, web)
   settings: { approvePlans: false, approveDeliverables: false },
 };
 

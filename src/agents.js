@@ -94,12 +94,29 @@ FAQs, support macros and lifecycle emails, and set up feedback loops that feed t
 ];
 
 // Built-ins without explicit tools get file access only.
-for (const a of BUILTIN) a.tools ||= a.id === 'ceo' ? ['Read', 'Glob', 'Grep'] : FILES;
+for (const a of BUILTIN) {
+  a.tools ||= a.id === 'ceo' ? ['Read', 'Glob', 'Grep'] : FILES;
+  a.persona = a.persona.replace(/\s*\n\s*/g, ' '); // one paragraph, so it edits cleanly in the UI
+}
 
 const COLORS = ['#c084fc', '#2dd4bf', '#f87171', '#a3e635', '#818cf8', '#fda4af', '#facc15', '#38bdf8'];
 
+const baseTools = (a) => (a.id === 'ceo' ? ['Read', 'Glob', 'Grep'] : FILES);
+
+/** Built-ins with any edits from the UI applied on top. */
+function withOverrides(a) {
+  const o = state.agentOverrides[a.id];
+  if (!o) return a;
+  return {
+    ...a,
+    ...o,
+    tools: o.web === undefined ? a.tools : o.web ? [...baseTools(a), ...WEB] : baseTools(a),
+    edited: true,
+  };
+}
+
 export function allAgents() {
-  return [...BUILTIN, ...Object.values(state.customAgents)];
+  return [...BUILTIN.map(withOverrides), ...Object.values(state.customAgents)];
 }
 
 export function getAgent(id) {
@@ -127,6 +144,38 @@ export function createAgent({ name, role, description, specialties = [], web = f
   state.customAgents[id] = agent;
   save();
   return agent;
+}
+
+/** Edit any bot's name, role, responsibilities/personality, specialties and web access. */
+export function updateAgent(id, { name, role, persona, specialties, web }) {
+  const patch = {};
+  if (name !== undefined) patch.name = String(name).trim().slice(0, 40) || undefined;
+  if (role !== undefined) patch.role = String(role).trim().slice(0, 80) || undefined;
+  if (persona !== undefined) patch.persona = String(persona).trim().slice(0, 4000) || undefined;
+  if (specialties !== undefined) patch.specialties = (Array.isArray(specialties) ? specialties : String(specialties).split(',')).map((x) => String(x).trim()).filter(Boolean).slice(0, 8);
+  if (web !== undefined) patch.web = Boolean(web);
+  for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
+
+  const custom = state.customAgents[id];
+  if (custom) {
+    const { web: w, ...rest } = patch;
+    Object.assign(custom, rest);
+    if (w !== undefined) custom.tools = w ? [...FILES, ...WEB] : FILES;
+  } else if (BUILTIN.some((a) => a.id === id)) {
+    state.agentOverrides[id] = { ...state.agentOverrides[id], ...patch };
+  } else {
+    return null;
+  }
+  save();
+  return getAgent(id);
+}
+
+/** Undo all edits to a built-in bot. */
+export function resetAgent(id) {
+  if (!state.agentOverrides[id]) return false;
+  delete state.agentOverrides[id];
+  save();
+  return true;
 }
 
 export function deleteAgent(id) {
@@ -189,6 +238,6 @@ ${memory.length ? `\nYour memory (preferences and summaries of past work — ver
 }
 
 export function publicAgent(a) {
-  const { id, name, role, color, specialties, tools = [], custom = false } = a;
-  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), custom, persona: a.persona };
+  const { id, name, role, color, specialties, tools = [], custom = false, edited = false } = a;
+  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), custom, edited, persona: a.persona };
 }
