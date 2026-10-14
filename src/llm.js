@@ -150,6 +150,9 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   if (signal?.aborted) throw new Error('aborted');
   if (result?.is_error || (code !== 0 && !result)) {
     const why = result?.result || stderr.trim() || `claude exited with code ${code}`;
+    if (/not logged in|\/login|log ?in|authenticat|credential|oauth/i.test(why)) {
+      throw new Error('Claude Code is not logged in. In cmd run `claude`, type /login, choose your Claude account (Pro/Max subscription), finish in the browser, type /exit, then try again.');
+    }
     throw new Error(`Claude Code: ${why.slice(0, 400)}`);
   }
 }
