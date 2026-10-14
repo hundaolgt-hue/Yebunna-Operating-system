@@ -11,36 +11,46 @@ import { demoStream } from './demo.js';
 const MODEL = process.env.CLAUDE_MODEL || '';
 
 /**
- * Find how to launch Claude Code: [command, leadingArgs].
+ * Ways Claude Code might be launchable on this machine, as [command, leadingArgs].
  * On Windows an npm install is a `claude.cmd` shim, which Node cannot spawn
- * without a shell, so we run its cli.js with Node directly instead.
+ * without a shell, so we target what the shim points at: the package's
+ * bin/claude.exe (current releases) or cli.js run with Node (older releases).
  */
-function resolveClaude() {
-  if (process.env.CLAUDE_BIN) return [process.env.CLAUDE_BIN, []];
-  if (process.platform !== 'win32') {
-    const local = path.join(os.homedir(), '.local', 'bin', 'claude');
-    return [spawnSync('claude', ['--version']).status !== 0 && fs.existsSync(local) ? local : 'claude', []];
-  }
+function candidates() {
+  if (process.env.CLAUDE_BIN) return [[process.env.CLAUDE_BIN, []]];
+  const home = os.homedir();
+  if (process.platform !== 'win32') return [['claude', []], [path.join(home, '.local', 'bin', 'claude'), []]];
+
+  const list = [];
   const found = spawnSync('where', ['claude'], { encoding: 'utf8' }).stdout?.split(/\r?\n/).filter(Boolean) || [];
-  const exe = found.find((p) => p.toLowerCase().endsWith('.exe'));
-  if (exe) return [exe, []];
-  for (const shim of found) {
-    const pkg = path.join(path.dirname(shim), 'node_modules', '@anthropic-ai', 'claude-code');
-    for (const entry of ['cli.js', 'cli.mjs']) {
-      if (fs.existsSync(path.join(pkg, entry))) return [process.execPath, [path.join(pkg, entry)]];
-    }
+  for (const p of found) if (p.toLowerCase().endsWith('.exe')) list.push([p, []]);
+  const dirs = [...found.map((p) => path.dirname(p)), path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm')];
+  for (const dir of new Set(dirs)) {
+    const pkg = path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code');
+    list.push([path.join(pkg, 'bin', 'claude.exe'), []]);
+    for (const entry of ['cli.js', 'cli.mjs']) list.push([process.execPath, [path.join(pkg, entry)]]);
   }
   // The native installer puts claude.exe in ~/.local/bin, which may not be on PATH.
-  const native = path.join(os.homedir(), '.local', 'bin', 'claude.exe');
-  return [fs.existsSync(native) ? native : 'claude.exe', []];
+  list.push([path.join(home, '.local', 'bin', 'claude.exe'), []], ['claude.exe', []]);
+  return list.filter(([cmd, args]) => !path.isAbsolute(args[0] || cmd) || fs.existsSync(args[0] || cmd));
 }
 
-const [BIN, BIN_ARGS] = resolveClaude();
-const cliVersion = (() => {
-  const r = spawnSync(BIN, [...BIN_ARGS, '--version'], { encoding: 'utf8' });
-  return r.status === 0 ? r.stdout.trim() : null;
+const tried = [];
+const [BIN, BIN_ARGS, cliVersion] = (() => {
+  if (process.env.DEMO_MODE === '1') return [null, [], null];
+  for (const [cmd, args] of candidates()) {
+    const r = spawnSync(cmd, [...args, '--version'], { encoding: 'utf8', windowsHide: true });
+    if (r.status === 0) return [cmd, args, r.stdout.trim()];
+    tried.push(`${[cmd, ...args].join(' ')} → ${r.error?.code || r.error?.message || (r.stderr || '').trim().slice(0, 120) || `exit ${r.status}`}`);
+  }
+  return [null, [], null];
 })();
-const demoMode = process.env.DEMO_MODE === '1' || !cliVersion;
+const demoMode = !cliVersion;
+
+/** Why Claude Code could not be started (empty when it was found). */
+export function detectionReport() {
+  return tried;
+}
 
 // Agents run in an empty folder so they don't pick up any project's CLAUDE.md.
 const WORKDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'yebunna-agent-'));

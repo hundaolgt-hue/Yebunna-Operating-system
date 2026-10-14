@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS, getAgent, publicAgent, systemPrompt } from './src/agents.js';
 import { state, save } from './src/store.js';
-import { providerInfo, streamChat } from './src/llm.js';
+import { providerInfo, streamChat, detectionReport } from './src/llm.js';
 import { demoChat } from './src/demo.js';
 import { bus, createMission, sendToMission, cancelMission, deleteMission, resumeAll } from './src/orchestrator.js';
 
@@ -184,7 +184,9 @@ resumeAll();
 server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);
-  console.log(p.name === 'demo'
-    ? 'Engine: offline demo (install Claude Code and run `claude` once to log in with your subscription)'
-    : `Engine: Claude via Claude Code ${p.cli} — model: ${p.model}`);
+  if (p.name !== 'demo') return console.log(`Engine: Claude via Claude Code ${p.cli} — model: ${p.model}`);
+  console.log('Engine: offline demo (install Claude Code and run `claude` once to log in with your subscription)');
+  const tried = detectionReport();
+  if (tried.length) console.log(`Could not start Claude Code. Tried:\n  ${tried.join('\n  ')}\nSet CLAUDE_BIN in .env to the full path of claude.exe if it lives elsewhere.`);
+  else if (process.env.DEMO_MODE !== '1') console.log('Claude Code was not found on this computer.');
 });
