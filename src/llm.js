@@ -8,10 +8,31 @@ import os from 'node:os';
 import path from 'node:path';
 import { demoStream } from './demo.js';
 
-const BIN = process.env.CLAUDE_BIN || 'claude';
 const MODEL = process.env.CLAUDE_MODEL || '';
+
+/**
+ * Find how to launch Claude Code: [command, leadingArgs].
+ * On Windows an npm install is a `claude.cmd` shim, which Node cannot spawn
+ * without a shell, so we run its cli.js with Node directly instead.
+ */
+function resolveClaude() {
+  if (process.env.CLAUDE_BIN) return [process.env.CLAUDE_BIN, []];
+  if (process.platform !== 'win32') return ['claude', []];
+  const found = spawnSync('where', ['claude'], { encoding: 'utf8' }).stdout?.split(/\r?\n/).filter(Boolean) || [];
+  const exe = found.find((p) => p.toLowerCase().endsWith('.exe'));
+  if (exe) return [exe, []];
+  for (const shim of found) {
+    const pkg = path.join(path.dirname(shim), 'node_modules', '@anthropic-ai', 'claude-code');
+    for (const entry of ['cli.js', 'cli.mjs']) {
+      if (fs.existsSync(path.join(pkg, entry))) return [process.execPath, [path.join(pkg, entry)]];
+    }
+  }
+  return ['claude.exe', []];
+}
+
+const [BIN, BIN_ARGS] = resolveClaude();
 const cliVersion = (() => {
-  const r = spawnSync(BIN, ['--version'], { encoding: 'utf8' });
+  const r = spawnSync(BIN, [...BIN_ARGS, '--version'], { encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : null;
 })();
 const demoMode = process.env.DEMO_MODE === '1' || !cliVersion;
@@ -67,7 +88,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   if (tools.length) args.push('--allowedTools', ...tools, '--max-turns', '12');
   if (MODEL) args.push('--model', MODEL);
 
-  const child = spawn(BIN, args, { cwd: WORKDIR, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKDIR, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const kill = () => child.kill('SIGTERM');
   signal?.addEventListener('abort', kill, { once: true });
   child.stdin.end(toPrompt(messages));
