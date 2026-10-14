@@ -17,7 +17,10 @@ const MODEL = process.env.CLAUDE_MODEL || '';
  */
 function resolveClaude() {
   if (process.env.CLAUDE_BIN) return [process.env.CLAUDE_BIN, []];
-  if (process.platform !== 'win32') return ['claude', []];
+  if (process.platform !== 'win32') {
+    const local = path.join(os.homedir(), '.local', 'bin', 'claude');
+    return [spawnSync('claude', ['--version']).status !== 0 && fs.existsSync(local) ? local : 'claude', []];
+  }
   const found = spawnSync('where', ['claude'], { encoding: 'utf8' }).stdout?.split(/\r?\n/).filter(Boolean) || [];
   const exe = found.find((p) => p.toLowerCase().endsWith('.exe'));
   if (exe) return [exe, []];
@@ -27,7 +30,9 @@ function resolveClaude() {
       if (fs.existsSync(path.join(pkg, entry))) return [process.execPath, [path.join(pkg, entry)]];
     }
   }
-  return ['claude.exe', []];
+  // The native installer puts claude.exe in ~/.local/bin, which may not be on PATH.
+  const native = path.join(os.homedir(), '.local', 'bin', 'claude.exe');
+  return [fs.existsSync(native) ? native : 'claude.exe', []];
 }
 
 const [BIN, BIN_ARGS] = resolveClaude();
