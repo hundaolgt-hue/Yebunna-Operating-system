@@ -120,21 +120,63 @@ function toPrompt(messages) {
   return `Conversation so far:\n\n${history}\n\nFounder: ${messages.at(-1).content}`;
 }
 
+// ---- run limits --------------------------------------------------------------------
+// Several missions, chats and meetings can be live at once; cap the number of Claude
+// Code processes so a subscription is not rate-limited into failures.
+const MAX_RUNS = Math.max(1, Number(process.env.MAX_CONCURRENT_RUNS || 4));
+const RUN_TIMEOUT_MS = Math.max(1, Number(process.env.RUN_TIMEOUT_MINUTES || 45)) * 60_000;
+let running = 0;
+const waiting = [];
+async function acquire(signal) {
+  if (running < MAX_RUNS) return void running++;
+  await new Promise((resolve, reject) => {
+    const entry = { resolve };
+    waiting.push(entry);
+    signal?.addEventListener('abort', () => {
+      const i = waiting.indexOf(entry);
+      if (i >= 0) waiting.splice(i, 1);
+      reject(new Error('aborted'));
+    });
+  });
+}
+function releaseSlot() {
+  const next = waiting.shift();
+  if (next) next.resolve(); // hand the slot straight over
+  else running--;
+}
+
+/** Thrown when a run used up its step budget; carries whatever it had written. */
+export class OutOfStepsError extends Error {
+  constructor(partial) {
+    super('ran out of steps before finishing');
+    this.code = 'max_turns';
+    this.partial = partial;
+  }
+}
+
 /**
- * Stream a Claude response. Yields `{ type: 'reasoning' | 'text', text }` events.
+ * Stream a Claude response. Yields events:
+ *   { type: 'text', text }       answer text (streamed live)
+ *   { type: 'reasoning', text }  thinking and tool use ("[using Write]")
+ *   { type: 'turn' }             the bot finished one step and is continuing after tool use —
+ *                                text streamed so far was "working out loud", not the answer
  *
- * effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' — how hard the agent thinks.
- * tools:  Claude Code tools the agent may use, e.g. ['Read', 'Write', 'WebSearch'].
- * model:  optional model alias for this call (e.g. 'haiku' for cheap housekeeping).
+ * effort:  'low' | 'medium' | 'high' | 'xhigh' | 'max' — how hard the agent thinks.
+ * tools:   Claude Code tools the agent may use, e.g. ['Read', 'Write', 'Bash', 'mcp__browser'].
+ * model:   optional model alias for this call (e.g. 'haiku' for cheap housekeeping).
  * agentId: which bot is running — picks its own browser profile for computer use.
- * demo:   function returning the scripted answer used in offline demo mode.
+ * demo:    function returning the scripted answer used in offline demo mode.
  */
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 25, agentId, signal, demo }) {
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, signal, demo }) {
   if (demoMode) {
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;
   }
 
+  await acquire(signal);
+  // Instructions go in a file: Windows caps a command line at ~32k characters.
+  const promptFile = path.join(os.tmpdir(), `yebunna-sys-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+  fs.writeFileSync(promptFile, system);
   const args = [
     '-p',
     '--output-format', 'stream-json',
@@ -142,18 +184,31 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     '--include-partial-messages',
     '--no-session-persistence',
     '--setting-sources', '',
-    '--system-prompt', system,
+    '--system-prompt-file', promptFile,
     '--effort', effort,
     '--tools', tools.filter((t) => !t.startsWith('mcp__')).join(','),
+    '--max-turns', String(maxTurns),
   ];
-  if (tools.length) args.push('--allowedTools', ...tools, '--max-turns', String(maxTurns));
+  if (tools.length) args.push('--allowedTools', ...tools);
   if (model || MODEL) args.push('--model', model || MODEL);
-  const browser = tools.includes('mcp__browser') ? browserConfig(agentId) : null;
-  if (browser) args.push('--mcp-config', browser.file, '--strict-mcp-config');
-
-  const child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let browser = null;
+  let child;
+  try {
+    browser = tools.includes('mcp__browser') ? browserConfig(agentId) : null;
+    if (browser) args.push('--mcp-config', browser.file, '--strict-mcp-config');
+    child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  } catch (e) {
+    browser?.release();
+    fs.rm(promptFile, { force: true }, () => {});
+    releaseSlot();
+    throw e;
+  }
+  let timedOut = false;
   const kill = () => child.kill('SIGTERM');
+  const timer = setTimeout(() => ((timedOut = true), kill()), RUN_TIMEOUT_MS);
   signal?.addEventListener('abort', kill, { once: true });
+  child.on('error', () => {});
+  child.stdin.on('error', () => {});
   child.stdin.end(toPrompt(messages));
 
   let stderr = '';
@@ -162,6 +217,8 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
 
   let result = null;
   let buf = '';
+  let turns = 0;
+  let lastText = '';
   try {
     for await (const chunk of child.stdout) {
       buf += chunk;
@@ -180,48 +237,75 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
           result = msg;
           continue;
         }
-        if (msg.type !== 'stream_event') continue;
+        if (msg.type !== 'stream_event' || msg.parent_tool_use_id) continue;
         const ev = msg.event;
-        if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+        if (ev.type === 'message_start') {
+          if (turns++ > 0) {
+            lastText = '';
+            yield { type: 'turn' };
+          }
+        } else if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
           yield { type: 'reasoning', text: `\n[using ${ev.content_block.name}]\n` };
         } else if (ev.type === 'content_block_delta') {
           if (ev.delta.type === 'thinking_delta') yield { type: 'reasoning', text: ev.delta.thinking };
-          else if (ev.delta.type === 'text_delta') yield { type: 'text', text: ev.delta.text };
+          else if (ev.delta.type === 'text_delta') {
+            lastText += ev.delta.text;
+            yield { type: 'text', text: ev.delta.text };
+          }
         }
       }
     }
   } finally {
+    clearTimeout(timer);
     signal?.removeEventListener('abort', kill);
     browser?.release();
+    fs.rm(promptFile, { force: true }, () => {});
+    releaseSlot();
   }
 
   const code = await exited;
   if (signal?.aborted) throw new Error('aborted');
+  if (timedOut) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`);
+  if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);
   if (result?.is_error || (code !== 0 && !result)) {
-    const why = result?.result || stderr.trim() || `claude exited with code ${code}`;
-    if (/not logged in|\/login|log ?in|authenticat|credential|oauth/i.test(why)) {
+    const why = String(result?.result || stderr.trim() || `claude exited with code ${code}`);
+    if (/not logged in|please run \/login|invalid api key|authentication_error|oauth token|\/login/i.test(why)) {
       throw new Error('Claude Code is not logged in. In cmd run `claude`, type /login, choose your Claude account (Pro/Max subscription), finish in the browser, type /exit, then try again.');
+    }
+    if (/usage limit|rate limit|limit reached|overloaded|429/i.test(why)) {
+      throw new Error(`Your Claude plan's usage limit was reached or Claude is busy — try again later. (${why.slice(0, 200)})`);
     }
     throw new Error(`Claude Code: ${why.slice(0, 400)}`);
   }
 }
 
-/** Run a completion to the end, forwarding stream events, and return the text. */
+/**
+ * Run a completion to the end, forwarding stream events. Returns the bot's final
+ * answer — the text of its last step, not the "working out loud" before tool calls.
+ */
 export async function complete(opts, onEvent) {
   let text = '';
   for await (const ev of streamChat(opts)) {
     onEvent?.(ev);
-    if (ev.type === 'text') text += ev.text;
+    if (ev.type === 'turn') text = '';
+    else if (ev.type === 'text') text += ev.text;
   }
   return text;
 }
 
-/** Pull the first JSON object out of a model reply (tolerates code fences and chatter). */
+/** Pull a JSON object out of a model reply (tolerates code fences, chatter and stray braces). */
 export function extractJson(text) {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const src = fenced ? fenced[1] : text;
-  const start = src.indexOf('{');
-  const end = src.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('No JSON object in model reply');
-  return JSON.parse(src.slice(start, end + 1));
+  const candidates = [...String(text).matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]).concat(String(text));
+  for (const src of candidates) {
+    const end = src.lastIndexOf('}');
+    for (let start = src.indexOf('{'); start >= 0 && start < end; start = src.indexOf('{', start + 1)) {
+      try {
+        const value = JSON.parse(src.slice(start, end + 1));
+        if (value && typeof value === 'object') return value;
+      } catch {
+        // try the next opening brace
+      }
+    }
+  }
+  throw new Error('No JSON object in model reply');
 }

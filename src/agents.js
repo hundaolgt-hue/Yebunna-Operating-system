@@ -24,7 +24,8 @@ const BUILTIN = [
     specialties: ['Strategy', 'Delegation', 'Prioritization', 'Quality review'],
     persona: `You are Atlas, the CEO. You turn the founder's goals into an executable plan, delegate each
 piece to the right specialist with a realistic deadline, hold the team to a high bar, and report back
-with crisp, honest summaries. You are direct, a little witty, and allergic to fluff.`,
+with crisp, honest summaries. You are a manager, not a doer: you never produce the specialists' work
+yourself — you plan, assign, review, unblock and report. You are direct, a little witty, and allergic to fluff.`,
   },
   {
     id: 'research',
@@ -222,22 +223,44 @@ export function forget(agentId, memId) {
 
 // ---- prompts --------------------------------------------------------------
 
+/** Does this skill belong to this bot? (Library skills can belong to several bots.) */
+export const skillOwnedBy = (s, agentId) =>
+  s.agentId === agentId || s.agentId === 'any' || (s.agentIds || []).includes(agentId) || (s.agentIds || []).includes('*');
+
 export function agentSkills(agentId) {
-  return Object.values(state.skills).filter((s) => s.status === 'active' && (s.agentId === agentId || s.agentId === 'any'));
+  return Object.values(state.skills).filter((s) => s.status === 'active' && skillOwnedBy(s, agentId));
+}
+
+/** Find a bot from whatever the CEO wrote: id, name, role or a close match. */
+export function resolveAgent(ref) {
+  if (!ref) return null;
+  const want = String(ref).trim().toLowerCase();
+  const all = allAgents();
+  return (
+    all.find((a) => a.id.toLowerCase() === want) ||
+    all.find((a) => a.name.toLowerCase() === want) ||
+    all.find((a) => a.role.toLowerCase() === want) ||
+    all.find((a) => want.includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(want)) ||
+    all.find((a) => a.role.toLowerCase().includes(want) || want.includes(a.role.toLowerCase())) ||
+    null
+  );
 }
 
 export function roster() {
   return allAgents()
     .map((a) => {
       const skills = agentSkills(a.id).map((s) => s.name);
-      return `- ${a.id}: ${a.name}, ${a.role} — ${a.specialties.join(', ')}${skills.length ? ` | skills: ${skills.join(', ')}` : ''}`;
+      const shown = skills.slice(0, 8).join(', ') + (skills.length > 8 ? ` +${skills.length - 8} more` : '');
+      return `- ${a.id}: ${a.name}, ${a.role} — ${a.specialties.join(', ')}${skills.length ? ` | skills: ${shown}` : ''}`;
     })
     .join('\n');
 }
 
 export function systemPrompt(agent) {
   const memory = (state.memory[agent.id] || []).slice(-15);
-  const skills = agentSkills(agent.id).slice(-6);
+  const owned = agentSkills(agent.id);
+  const skills = owned.filter((s) => !s.path).slice(-6); // written skills: included in full
+  const library = owned.filter((s) => s.path).slice(0, 80); // skill packs: read on demand
   return `${agent.persona}
 
 ${COMPANY}
@@ -271,6 +294,16 @@ ${roster()}
 ${memory.length ? `\nYour memory (preferences and summaries of past work — verify changing facts at the source):\n${memory.map((m) => `- ${m.text}`).join('\n')}\n` : ''}${
     skills.length
       ? `\nYour skills (follow the matching skill's steps, rules and approval boundaries when it applies):\n${skills.map((s) => `### Skill: ${s.name}\n${s.summary}\n${s.body}`).join('\n\n')}\n`
+      : ''
+  }${
+    library.length
+      ? `\nYour skill library. Before starting work, check this list: when a skill matches the task, use the Read tool
+to open its SKILL.md (and any files it points to) and follow it. Skills marked with ⚙ may need the terminal.
+${library.map((s) => `- ${s.name}: ${String(s.summary).slice(0, 150)} → ${s.path}`).join('\n')}\n`
+      : ''
+  }${
+    agent.id === 'ceo'
+      ? '\nAs CEO you never do specialist work yourself (no writing copy, code, designs, research or spreadsheets). Your tools are for checking the team\'s files and facts. When the founder asks for work, it gets delegated to the team.\n'
       : ''
   }`;
 }

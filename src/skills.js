@@ -5,7 +5,8 @@
 // screen while doing the workflow once and the agent drafts the skill from it.
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAgent } from './agents.js';
+import { getAgent, specialists, allAgents } from './agents.js';
+import { logActivity } from './activity.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, newId, now, WORKSPACE } from './store.js';
 import { bus, createMissionWithTasks } from './orchestrator.js';
@@ -32,6 +33,10 @@ export function createSkill({ name, agentId = 'any', summary = '', body = '', st
 
 export function updateSkill(s, patch) {
   for (const k of ['name', 'agentId', 'summary', 'body', 'status']) if (patch[k] !== undefined) s[k] = patch[k];
+  if (Array.isArray(patch.agentIds)) {
+    s.agentIds = patch.agentIds;
+    s.ownersEdited = true; // keep the founder's choice when the pack updates
+  }
   s.updatedAt = now();
   emit(s);
   return s;
@@ -128,22 +133,79 @@ ${SKILL_FORMAT}`,
   return s;
 }
 
+/**
+ * Build a bot's core skills from its own role, responsibilities and specialties —
+ * so what the founder wrote in the bot's description becomes concrete procedures it
+ * follows. Re-running replaces the bot's previous role skills.
+ */
+export async function generateRoleSkills(agentId) {
+  const agent = getAgent(agentId);
+  if (!agent) throw new Error('agent not found');
+  logActivity(agentId, 'is writing its core skills from its role description');
+  const raw = await complete({
+    system: 'You write precise, reusable operating procedures (skills) for an AI teammate at a company that builds and sells digital products.',
+    messages: [
+      {
+        role: 'user',
+        content: `Write this teammate's core skills — one skill per responsibility or specialty in their description.
+Name: ${agent.name}
+Role: ${agent.role}
+Responsibilities & personality: ${agent.persona}
+Specialties: ${agent.specialties.join(', ')}
+Tools they have: read/write/edit files in a shared workspace${agent.tools.includes('WebSearch') ? ', web search' : ''}${state.settings.terminal ? ', a terminal (Python etc.)' : ''}${agent.computer ? ', a web browser (computer use)' : ''}.
+
+Write 3 to 5 skills. Each must be concrete and specific to this role (not generic advice): the exact steps,
+the decision rules, what the output must contain and where to save it, and approval boundaries.
+
+Reply with ONLY JSON:
+{"skills": [{"name": "<short skill name>", "summary": "<when to use it, one sentence>",
+ "body": "<Markdown with sections: **When to use**, **Inputs**, **Steps** (numbered), **Decision rules**, **Output requirements**, **Approval boundaries**>"}]}`,
+      },
+    ],
+    effort: 'medium',
+    demo: () =>
+      JSON.stringify({
+        skills: agent.specialties.slice(0, 3).map((sp) => ({ ...JSON.parse(demoSkill(sp)), name: sp })),
+      }),
+  });
+  const list = (extractJson(raw).skills || []).filter((x) => x?.name && x?.body).slice(0, 6);
+  if (!list.length) throw new Error('No skills came back — try again.');
+  for (const old of Object.values(state.skills)) if (old.source === 'role' && old.agentId === agentId) deleteSkill(old);
+  const created = list.map((x) => createSkill({ name: x.name, agentId, summary: String(x.summary || ''), body: String(x.body), status: 'active', source: 'role' }));
+  logActivity(agentId, `wrote ${created.length} core skills from its role`);
+  return created;
+}
+
+/** Build role skills for every bot, a few at a time. */
+export async function generateAllRoleSkills() {
+  const results = [];
+  for (const a of allAgents()) {
+    try {
+      results.push({ agentId: a.id, ok: true, count: (await generateRoleSkills(a.id)).length });
+    } catch (e) {
+      results.push({ agentId: a.id, ok: false, error: e.message });
+    }
+  }
+  return results;
+}
+
 /** Test a skill: assign it to its agent as a one-task mission. */
 export function runSkill(s, { input = '', deadlineHours = 4, agentId } = {}) {
-  const owner = agentId || (s.agentId !== 'any' ? s.agentId : null);
+  const owner = agentId || (s.agentId && s.agentId !== 'any' ? s.agentId : (s.agentIds || []).find((a) => a !== '*' && a !== 'ceo'));
   if (!owner || !getAgent(owner) || owner === 'ceo') throw new Error('Choose which bot should run this skill.');
   s.runs = (s.runs || 0) + 1;
   emit(s);
   return createMissionWithTasks({
     goal: `Run skill “${s.name}”${input ? `: ${input}` : ''}`,
     deadline: new Date(Date.now() + deadlineHours * 36e5).toISOString(),
-    specs: [{ agent: owner, title: `Run skill: ${s.name}`, brief: input || s.summary, deliverable: 'Follow the skill and deliver its output', due_in_hours: deadlineHours, skillId: s.id }],
+    specs: [{ agent: owner, title: `Run skill: ${s.name}`, brief: input || s.summary || s.name, deliverable: 'Follow the skill and deliver its output', due_in_hours: deadlineHours, skillId: s.id }],
     intro: `Assigned skill **${s.name}** to ${getAgent(owner).name}.`,
     source: `skill:${s.id}`,
   });
 }
 
 function applyDraft(s, d) {
+  logActivity(s.agentId && s.agentId !== 'any' ? s.agentId : 'ceo', `drafted the skill “${d.name || s.name}” — ready for your review`);
   s.name = String(d.name || s.name).slice(0, 80);
   s.summary = String(d.summary || '');
   s.body = String(d.body || '');

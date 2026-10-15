@@ -1,5 +1,5 @@
 // Yebunna OS — client entry: router, sidebar, live event stream, countdown clocks.
-import { S, $, $$, api, esc, markdown, view, setAgents, due, missionDue, sortedMissions, toast } from './core.js';
+import { S, $, $$, api, esc, markdown, view, setAgents, due, missionDue, sortedMissions, toast, activityList } from './core.js';
 import { renderHome } from './views/home.js';
 import { renderMission } from './views/mission.js';
 import { renderBoard } from './views/board.js';
@@ -58,6 +58,7 @@ function render(focusId) {
   renderSidebar();
   delete view().dataset.mission;
   delete view().dataset.meeting;
+  delete view().dataset.chat;
   switch (parts[0]) {
     case 'm':
       return renderMission(parts[1], focusId);
@@ -118,7 +119,7 @@ function refresh(type) {
       case 'routines':
         return renderRoutines();
       case 'chat':
-        if (!S.chatBusy && ['memory', 'skill', 'skill.deleted', 'agents'].includes(type)) return renderAgent(parts[1]);
+        if (!S.chatBusy && ['memory', 'skill', 'skill.deleted', 'agents', 'chat'].includes(type)) return renderAgent(parts[1]);
         return;
       case 'settings':
         if (['agents', 'settings'].includes(type)) return renderSettings();
@@ -173,6 +174,20 @@ function onEvent(e) {
     S.settings = e.settings;
   } else if (e.type === 'agents') {
     setAgents(e.agents);
+  } else if (e.type === 'activity') {
+    S.activity.push(e.item);
+    if (S.activity.length > 400) S.activity.splice(0, S.activity.length - 400);
+    // Only the feed itself updates — never redraw a page (and wipe typing) for activity.
+    const feed = $('[data-activity]', view());
+    if (feed) {
+      const only = feed.dataset.activity;
+      feed.innerHTML = activityList(only ? S.activity.filter((a) => a.agentId === only) : S.activity, { limit: Number(feed.dataset.limit) || 60 });
+    }
+    return renderSidebar();
+  } else if (e.type === 'packs') {
+    S.packs = e.packs;
+  } else if (e.type === 'chat') {
+    delete S.chats[e.agentId]; // a reply was saved (maybe from another tab) — reload on next view
   } else if (e.type === 'notice') {
     toast(`${S.agentById[e.agentId]?.name || 'Bot'}: ${e.text}`);
     delete S.chats[e.agentId]; // reload the chat so the notice shows there
@@ -200,6 +215,8 @@ async function loadState() {
   }
   S.memory = st.memory;
   S.settings = st.settings;
+  S.activity = st.activity || [];
+  S.packs = st.packs || [];
   refresh('state');
 }
 

@@ -7,13 +7,15 @@ export async function renderFiles(selected) {
   const v = view();
   const { root, files } = await api('/api/files').catch((e) => (toast(e.message), { files: [] }));
   if (!S.route.startsWith('files')) return;
-  const visible = files.filter((f) => !f.path.startsWith('.teach/')).sort((a, b) => b.mtime.localeCompare(a.mtime));
+  // Internal folders (taught recordings, skill packs, browser profiles) stay out of the list…
+  const visible = files.filter((f) => !/^\.(teach|skills|browser)\//.test(f.path)).sort((a, b) => b.mtime.localeCompare(a.mtime));
   const groups = {};
   for (const f of visible) {
     const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '.';
     (groups[dir] ||= []).push(f);
   }
-  const file = visible.find((f) => f.path === selected) || (selected ? null : visible[0]);
+  // …but can still be opened directly (e.g. "View" on a skill).
+  const file = files.find((f) => f.path === selected) || (selected && /\.\w+$/.test(selected) ? { path: selected, size: 0 } : selected ? null : visible[0]);
   const folderFocus = selected && !file ? selected : null;
 
   v.innerHTML = `<div class="page files-page">

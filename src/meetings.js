@@ -7,6 +7,7 @@ import { getAgent, systemPrompt } from './agents.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, newId, now } from './store.js';
 import { bus, createMissionWithTasks } from './orchestrator.js';
+import { logActivity } from './activity.js';
 import { demoMeetingTurn, demoMinutes } from './demo.js';
 
 const emit = (mt) => {
@@ -37,6 +38,7 @@ export function startMeeting({ title, agenda, participants, rounds = 2, kind = '
   };
   state.meetings[mt.id] = mt;
   emit(mt);
+  logActivity('ceo', `opened ${kind === 'standup' ? 'a standup' : 'a meeting'}: ${mt.title}`, { type: 'meeting', id: mt.id });
   run(mt, mt.rounds).catch((e) => failMeeting(mt, e));
   return mt;
 }
@@ -141,6 +143,7 @@ Speak naturally in 40–120 words, first person, no headings, no lists longer th
   );
   u.streaming = false;
   emit(mt);
+  logActivity(agentId, `spoke in “${mt.title}”`, { type: 'meeting', id: mt.id });
 }
 
 async function writeMinutes(mt) {

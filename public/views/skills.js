@@ -1,22 +1,81 @@
 import { S, $, $$, api, esc, markdown, avatar, agentName, toast, view, openDialog, onSubmit, agentOptions, fileUrl, Recognition, ago } from '../core.js';
 
-const SOURCE = (s) => (s.source === 'taught' ? '🎥 taught by demo' : s.source?.startsWith('task:') ? '💾 saved from a task' : '✍️ written');
+const SOURCE = (s) => (s.source === 'taught' ? '🎥 taught by demo' : s.source?.startsWith('task:') ? '💾 saved from a task' : s.source === 'role' ? '✨ written from the bot\'s role' : '✍️ written');
+
+const PACK_STATUS = { installed: '✓ installed', installing: 'installing…', failed: 'failed', 'not installed': 'not installed' };
 
 export function renderSkills() {
-  const skills = Object.values(S.skills).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const all = Object.values(S.skills).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const own = all.filter((s) => !s.path);
+  const library = all.filter((s) => s.path);
+  const packs = S.packs || [];
+  const busyPacks = packs.some((p) => p.status === 'installing');
+  const openGroups = new Set($$('details.lib-group[open]', view()).map((d) => d.dataset.pack));
   view().innerHTML = `<div class="page">
     <div class="page-head"><h2>Skills</h2><p>Reusable processes your bots follow: steps, decision rules, output requirements and approval boundaries.</p>
-      <span class="spacer"></span><button class="btn-ghost" data-new>✍️ Write a skill</button><button class="btn" data-teach>🎥 Teach a task</button></div>
+      <span class="spacer"></span><button class="btn-ghost" data-gen-all title="Each bot turns its role, responsibilities and specialties into step-by-step skills">✨ Write skills for every bot from its role</button><button class="btn-ghost" data-new>✍️ Write a skill</button><button class="btn" data-teach>🎥 Teach a task</button></div>
+
+    <section class="settings packs">
+      <div class="row"><h3>Skill packs</h3><span class="spacer"></span><button class="btn-ghost" data-install-all ${busyPacks ? 'disabled' : ''}>${busyPacks ? 'Installing…' : '⬇ Install / update all'}</button></div>
+      <p class="side-text">Community skill libraries (the same ones <code>npx skills add</code> installs), downloaded into your workspace with git and given to the right bots. Bots open a skill's SKILL.md when a task matches it.</p>
+      <div class="pack-grid">${packs
+        .map(
+          (p) => `<div class="pack ${p.status === 'installed' ? 'ok' : p.status === 'failed' ? 'bad' : ''}">
+            <b>${esc(p.label)}</b><small>${esc(p.repo)}${p.commit ? ` @ ${esc(p.commit)}` : ''}</small>
+            <span class="pack-status">${PACK_STATUS[p.status] || esc(p.status)}${p.count ? ` · ${p.count} skills` : ''}${p.error ? ` — ${esc(p.error)}` : ''}</span>
+            <button class="btn-ghost small-btn" data-install="${p.id}" ${p.status === 'installing' ? 'disabled' : ''}>${p.status === 'installed' ? 'Update' : 'Install'}</button>
+          </div>`,
+        )
+        .join('')}</div>
+    </section>
+
+    <h3 class="section-title">Your skills <span class="count">${own.length}</span></h3>
     ${
-      skills.length
-        ? `<div class="skill-grid">${skills.map(card).join('')}</div>`
-        : `<div class="empty-hero"><div class="big">🎥</div><h3>Watch and learn</h3><p>Do a workflow once while a bot watches your screen. It drafts a skill you can review, test and reuse — on demand or on a schedule.</p><button class="btn" data-teach2>Teach your first task</button></div>`
+      own.length
+        ? `<div class="skill-grid">${own.map(card).join('')}</div>`
+        : `<div class="empty-hero"><div class="big">🎥</div><h3>Watch and learn</h3><p>Do a workflow once while a bot watches your screen — or click “Write skills for every bot from its role”. Skills you can review, test and reuse appear here.</p><button class="btn" data-teach2>Teach your first task</button></div>`
+    }
+
+    ${
+      library.length
+        ? `<h3 class="section-title">Skill library <span class="count">${library.length}</span></h3>
+      <div class="library">${packs
+        .filter((p) => library.some((s) => s.pack === p.id))
+        .map(
+          (p) => `<details class="lib-group" data-pack="${p.id}" ${openGroups.has(p.id) || library.filter((s) => s.pack === p.id).length <= 3 ? 'open' : ''}><summary><b>${esc(p.label)}</b> <span class="count">${library.filter((s) => s.pack === p.id).length}</span></summary>
+          ${library
+            .filter((s) => s.pack === p.id)
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(
+              (s) => `<div class="lib-row">
+                <div class="grow"><b>${esc(s.name)}</b><small>${esc(String(s.summary).slice(0, 160))}</small></div>
+                <div class="avatars">${(s.agentIds || []).includes('*') ? '<span class="tag-s">all bots</span>' : (s.agentIds || []).map((id) => avatar(id, 'sm')).join('')}</div>
+                <a class="btn-ghost small-btn" href="#/files?f=${encodeURIComponent(s.path)}">View</a>
+                <button class="btn-ghost small-btn" data-owners="${s.id}">Bots</button>
+                <label class="switch" title="On/off"><input type="checkbox" data-toggle-skill="${s.id}" ${s.status === 'active' ? 'checked' : ''}/><span></span></label>
+              </div>`,
+            )
+            .join('')}</details>`,
+        )
+        .join('')}</div>`
+        : ''
     }
   </div>`;
   const v = view();
   $('[data-new]', v).addEventListener('click', () => editSkillDialog());
   $('[data-teach]', v).addEventListener('click', () => teachDialog());
   $('[data-teach2]', v)?.addEventListener('click', () => teachDialog());
+  $('[data-gen-all]', v).addEventListener('click', () =>
+    api('/api/skills/generate-all', { method: 'POST' })
+      .then(() => toast('Every bot is writing skills from its role, one after another — watch them appear here.'))
+      .catch((e) => toast(e.message)),
+  );
+  $('[data-install-all]', v).addEventListener('click', () => api('/api/skill-packs/install', { method: 'POST', body: {} }).catch((e) => toast(e.message)));
+  $$('[data-install]', v).forEach((b) => b.addEventListener('click', () => api('/api/skill-packs/install', { method: 'POST', body: { id: b.dataset.install } }).catch((e) => toast(e.message))));
+  $$('[data-toggle-skill]', v).forEach((el) =>
+    el.addEventListener('change', () => api(`/api/skills/${el.dataset.toggleSkill}`, { method: 'PUT', body: { status: el.checked ? 'active' : 'draft' } }).catch((e) => toast(e.message))),
+  );
+  $$('[data-owners]', v).forEach((b) => b.addEventListener('click', () => ownersDialog(S.skills[b.dataset.owners])));
   $$('[data-edit]', v).forEach((b) => b.addEventListener('click', () => editSkillDialog(S.skills[b.dataset.edit])));
   $$('[data-run]', v).forEach((b) => b.addEventListener('click', () => runSkillDialog(S.skills[b.dataset.run])));
   $$('[data-activate]', v).forEach((b) => b.addEventListener('click', () => api(`/api/skills/${b.dataset.activate}`, { method: 'PUT', body: { status: 'active' } }).then(() => toast('Skill activated — its bot now uses it.'))));
@@ -27,11 +86,38 @@ export function renderSkills() {
   );
 }
 
+/** Choose which bots use a library skill. */
+function ownersDialog(s) {
+  const owners = new Set(s.agentIds || []);
+  openDialog(
+    `Who uses “${s.name}”?`,
+    `<form class="form" data-form>
+      <p class="side-text">${esc(s.summary)}</p>
+      <label class="check"><input type="checkbox" data-all ${owners.has('*') ? 'checked' : ''}/> All bots</label>
+      <div class="pick">${S.agents
+        .map((a) => `<label class="pick-item"><input type="checkbox" name="agentIds" data-group value="${a.id}" ${owners.has(a.id) || owners.has('*') ? 'checked' : ''}/>${avatar(a.id, 'sm')}<span>${esc(a.name)}<small>${esc(a.role)}</small></span></label>`)
+        .join('')}</div>
+      <div class="row-btns end"><button class="btn" type="submit">Save</button></div>
+    </form>`,
+    (dlg, close) => {
+      const form = $('[data-form]', dlg);
+      const all = $('[data-all]', dlg);
+      all.addEventListener('change', () => $$('[name=agentIds]', dlg).forEach((c) => (c.checked = all.checked)));
+      onSubmit(form, async (d) => {
+        const ids = all.checked ? ['*'] : d.agentIds || [];
+        await api(`/api/skills/${s.id}`, { method: 'PUT', body: { agentIds: ids } });
+        close();
+        toast('Saved.');
+      });
+    },
+  );
+}
+
 function card(s) {
   const drafting = s.status === 'drafting';
   const frames = s.teach ? Array.from({ length: Math.min(4, s.teach.frames) }, (_, i) => Math.floor((i * (s.teach.frames - 1)) / 3) + 1) : [];
   return `<div class="skill-card">
-    <div class="row">${s.agentId === 'any' ? '<div class="avatar sm" style="background:#555;color:#fff">∗</div>' : avatar(s.agentId, 'sm')}<span class="faint">${s.agentId === 'any' ? 'Any bot' : esc(agentName(s.agentId))}</span>
+    <div class="row">${s.agentId === 'any' ? '<div class="avatar sm" style="background:#555;color:#fff">∗</div>' : avatar(s.agentId, 'sm')}<span class="faint">${s.agentId === 'any' ? 'Any bot' : esc(agentName(s.agentId))}${s.source === 'role' ? ' · from its role' : ''}</span>
       <span class="spacer"></span><span class="status ${s.status === 'active' ? 'done' : s.status === 'failed' ? 'failed' : 'review'}">${drafting ? 'drafting…' : s.status}</span></div>
     <h3>${esc(s.name)}</h3>
     ${frames.length ? `<div class="frames">${frames.map((n) => `<img src="${fileUrl(`${s.teach.dir}/frame-${String(n).padStart(3, '0')}.jpg`)}" alt="" loading="lazy" />`).join('')}</div>` : ''}

@@ -7,6 +7,7 @@ import { state, save, newId, now } from './store.js';
 import { bus, createMission, createMissionWithTasks } from './orchestrator.js';
 import { startMeeting } from './meetings.js';
 import { runSkill } from './skills.js';
+import { logActivity } from './activity.js';
 
 const emit = (r) => {
   save();
@@ -121,6 +122,7 @@ export function fireRoutine(r, reason = 'manual') {
   } catch (e) {
     run.error = e.message;
   }
+  logActivity(r.agentId || 'ceo', run.error ? `routine “${r.name}” failed: ${run.error}` : `ran the routine “${r.name}” (${reason})`, run.ref?.type === 'meeting' ? { type: 'meeting', id: run.ref.id } : run.ref ? { type: 'mission', id: run.ref.id } : null);
   r.runs = [run, ...r.runs].slice(0, 20);
   r.lastRunAt = run.at;
   r.nextRunAt = r.enabled ? nextRun(r.schedule) : null;

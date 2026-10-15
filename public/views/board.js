@@ -1,10 +1,11 @@
-import { S, esc, avatar, due, STATUS_LABEL, view } from '../core.js';
+import { S, esc, avatar, due, STATUS_LABEL, view, activityList } from '../core.js';
 
 export function renderBoard() {
   const cols = ['queued', 'in_progress', 'review', 'approval', 'done', 'failed'];
   const all = Object.values(S.tasks).sort((a, b) => a.deadline.localeCompare(b.deadline));
   view().innerHTML = `<div class="page">
-    <div class="page-head"><h2>Task board</h2><p>Every delegated task across all missions, earliest deadline first.</p></div>
+    <div class="page-head"><h2>Task board</h2><p>Every delegated task across all missions, earliest deadline first — and what each bot is doing right now.</p></div>
+    <div class="board-wrap">
     <div class="board">${cols
       .map((c) => {
         const items = all.filter((t) => t.status === c);
@@ -23,5 +24,7 @@ export function renderBoard() {
       </div>`;
       })
       .join('')}</div>
+    <aside class="activity-panel"><h4><span class="dot running inline"></span>Live activity</h4><div data-activity data-limit="80">${activityList(S.activity, { limit: 80, empty: 'When bots start working, everything they do shows up here.' })}</div></aside>
+    </div>
   </div>`;
 }

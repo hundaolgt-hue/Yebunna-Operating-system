@@ -187,7 +187,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .page-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
 .page-head h2 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
 .page-head p { margin: 0; color: var(--muted); }
-.board { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 6px; }
+.board { display: grid; grid-template-columns: repeat(6, minmax(165px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 6px; }
 .col { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 12px; min-height: 200px; }
 .col-head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; color: var(--muted); padding: 2px 4px 10px; }
 .card { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin-bottom: 8px; transition: border-color .15s, transform .15s; }
@@ -418,3 +418,40 @@ pre.code { margin: 0; font-family: var(--mono); font-size: 13px; white-space: pr
 }
 
 .select-sm { background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); border-radius: 10px; padding: 6px 10px; font: inherit; font-size: 13px; color-scheme: dark; }
+
+/* live activity */
+.board-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; }
+.activity-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 12px; position: sticky; top: 0; max-height: calc(100vh - 120px); overflow-y: auto; }
+.activity-panel h4 { margin: 2px 4px 10px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+ul.activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+ul.activity li > a, ul.activity li > .avatar { display: flex; }
+ul.activity li > a, ul.activity li { gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); }
+ul.activity li { display: flex; padding: 6px 6px; border-radius: 10px; }
+ul.activity li:hover { background: var(--surface); }
+ul.activity li b { color: var(--text); font-weight: 600; }
+ul.activity li small { display: block; color: var(--faint); font-size: 11px; }
+ul.activity li span { line-height: 1.4; }
+.empty.small { padding: 16px 6px; font-size: 13px; text-align: left; }
+@media (max-width: 1100px) { .board-wrap { grid-template-columns: 1fr; } .activity-panel { position: static; max-height: 360px; } }
+
+/* skills: packs + library */
+.small-btn { padding: 4px 10px; font-size: 12px; }
+.section-title { font-size: 15px; margin: 22px 0 12px; display: flex; align-items: center; gap: 8px; }
+.packs .row { display: flex; align-items: center; gap: 8px; }
+.packs h3 { margin: 0; }
+.pack-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.pack { border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.pack small { color: var(--faint); font-size: 11px; }
+.pack .pack-status { color: var(--muted); font-size: 12px; }
+.pack.ok .pack-status { color: var(--ok); }
+.pack.bad .pack-status { color: var(--bad); }
+.pack .small-btn { align-self: flex-start; margin-top: 4px; }
+.library { display: flex; flex-direction: column; gap: 8px; }
+.lib-group { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 4px 12px; }
+.lib-group summary { cursor: pointer; padding: 10px 2px; display: flex; align-items: center; gap: 8px; }
+.lib-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.lib-row b { display: block; font-size: 13px; font-weight: 600; }
+.lib-row small { color: var(--muted); font-size: 12px; }
+.lib-row .avatars .avatar { width: 20px; height: 20px; font-size: 9px; }
+.pack-list summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 10px; }
+.side .small-btn { margin-bottom: 4px; }

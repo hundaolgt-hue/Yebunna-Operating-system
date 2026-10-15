@@ -21,7 +21,9 @@ import {
   decideTask,
 } from './src/orchestrator.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
-import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill } from './src/skills.js';
+import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
+import { listPacks, installPack, installAll } from './src/skillpacks.js';
+import { logActivity, toolTracker } from './src/activity.js';
 import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -102,6 +104,7 @@ function walk(dir, base = '', out = []) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name === '.git') continue;
+      if (!base && ['.skills', '.browser'].includes(entry.name)) continue; // internal: thousands of files
       walk(full, rel, out);
     } else {
       const st = fs.statSync(full);
@@ -125,6 +128,8 @@ const routes = {
       routines: Object.values(state.routines),
       memory: state.memory,
       settings: state.settings,
+      activity: (state.activity || []).slice(-200),
+      packs: listPacks(),
     }),
 
   'GET /api/events': (req, res) => {
@@ -158,7 +163,6 @@ const routes = {
     const m = get('missions', id, 'mission');
     const { text, mode } = await readBody(req);
     need(text?.trim(), 400, 'text is required');
-    need(m.status !== 'planning', 409, 'The CEO is still planning — try again in a moment.');
     if (m.status === 'cancelled') m.status = 'done';
     sendToMission(m, { text: text.trim(), mode: mode === 'ask' ? 'ask' : 'delegate' });
     send(res, 202, { ok: true });
@@ -316,9 +320,12 @@ const routes = {
 
     const history = (state.chats[agentId] ||= []);
     history.push({ role: 'user', content: text.trim(), at: now() });
-    const write = sse(res);
-    const abort = new AbortController();
-    res.on('close', () => abort.abort());
+    // The reply keeps going even if the page is closed or refreshed; it is saved either way.
+    const stream = sse(res);
+    const write = (ev) => !res.destroyed && !res.writableEnded && stream(ev);
+    const isCeo = agentId === 'ceo';
+    const ref = { type: 'chat', agentId };
+    const track = toolTracker(agentId, ref);
 
     const reply = { role: 'assistant', content: '', reasoning: '', at: now() };
     try {
@@ -327,27 +334,62 @@ const routes = {
         .slice(-5)
         .map((t) => `- ${t.title} [${t.status}] due ${t.deadline}${t.file ? ` (file: ${t.file})` : ''}`)
         .join('\n');
+      const ceoRules = isCeo
+        ? `\n\nWhen the founder asks for WORK to be done (build, write, research, design, price, launch, fix…), you do
+not do it yourself. Reply in 1–3 sentences saying which teammates will handle it, then end your message
+with exactly one block in this format:
+\`\`\`delegate
+{"goal": "<the work, written as a clear mission goal with all the details the founder gave>", "deadline_hours": <number>}
+\`\`\`
+The OS turns it into a mission and you delegate it to the team. For questions, status checks and advice,
+just answer (you may read the team's files) — no block.`
+        : '';
       for await (const ev of streamChat({
-        system: `${systemPrompt(agent)}\n\nYou are chatting 1:1 with the founder.${work ? `\nYour recent assignments:\n${work}` : ''}${rememberMatch ? '\nThe founder just asked you to remember something; it is saved to your memory — confirm briefly.' : ''}`,
+        system: `${systemPrompt(agent)}\n\nYou are chatting 1:1 with the founder.${work ? `\nYour recent assignments:\n${work}` : ''}${rememberMatch ? '\nThe founder just asked you to remember something; it is saved to your memory — confirm briefly.' : ''}${ceoRules}`,
         messages: history.slice(-20).map(({ role, content }) => ({ role, content })),
-        tools: toolsFor(agent),
+        tools: isCeo ? ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'] : toolsFor(agent),
         agentId,
-        maxTurns: agent.computer ? 60 : 25,
-        signal: abort.signal,
-        demo: () => demoChat(agentId, text),
+        maxTurns: agent.computer ? 150 : 100,
+        demo: () => (isCeo && !rememberMatch ? `On it — I'll get the team on this.\n\n\`\`\`delegate\n${JSON.stringify({ goal: text.trim(), deadline_hours: 24 })}\n\`\`\`` : demoChat(agentId, text)),
       })) {
-        if (ev.type === 'text') reply.content += ev.text;
-        else reply.reasoning += ev.text;
+        if (ev.type === 'turn') {
+          // Text before a tool call was working-out-loud: keep it under Thoughts.
+          if (reply.content) reply.reasoning += `${reply.content}\n`;
+          reply.content = '';
+        } else if (ev.type === 'text') reply.content += ev.text;
+        else {
+          reply.reasoning += ev.text;
+          track(ev.text);
+        }
         write(ev);
       }
+
+      // CEO handed work to the team: start a real mission (it shows on the board).
+      const block = isCeo && reply.content.match(/```delegate\s*([\s\S]*?)```/);
+      if (block) {
+        let spec = {};
+        try {
+          spec = JSON.parse(block[1]);
+        } catch {
+          spec = { goal: text.trim() };
+        }
+        const hours = Math.min(24 * 60, Math.max(1, Number(spec.deadline_hours) || 24));
+        const m = createMission({ goal: String(spec.goal || text).trim(), deadline: new Date(Date.now() + hours * 36e5).toISOString(), source: 'chat' });
+        reply.content = `${reply.content.replace(block[0], '').trim()}\n\n→ Started mission **[${m.title}](#/m/${m.id})** (due in ${hours}h) — I'm assigning it to the team now.`;
+        reply.missionId = m.id;
+        write({ type: 'replace', content: reply.content });
+      }
       history.push(reply);
+      logActivity(agentId, block ? 'turned your chat request into a mission' : 'replied to you in chat', ref);
       write({ type: 'done' });
     } catch (e) {
       if (reply.content) history.push(reply);
+      history.push({ role: 'assistant', content: `⚠️ ${e.message}`, at: now() });
       write({ type: 'error', text: e.message });
     }
     save();
-    res.end();
+    bus.emit('event', { type: 'chat', agentId });
+    if (!res.writableEnded) res.end();
   },
 
   // ---- team meetings & standups ----
@@ -405,6 +447,24 @@ const routes = {
     } catch (e) {
       throw new HttpError(400, e.message);
     }
+  },
+
+  // ---- skill packs & role skills ----
+  'GET /api/skill-packs': (req, res) => send(res, 200, listPacks()),
+  'POST /api/skill-packs/install': async (req, res) => {
+    const { id } = await readBody(req);
+    if (id) installPack(id).catch(() => {});
+    else installAll();
+    send(res, 202, { ok: true });
+  },
+  'POST /api/agents/:id/generate-skills': async (req, res, { id }) => {
+    need(getAgent(id), 404, 'agent not found');
+    send(res, 202, { ok: true });
+    generateRoleSkills(id).catch((e) => logActivity(id, `couldn't write its skills: ${e.message}`));
+  },
+  'POST /api/skills/generate-all': (req, res) => {
+    send(res, 202, { ok: true });
+    generateAllRoleSkills().catch(() => {});
   },
 
   // ---- routines ----
@@ -490,6 +550,8 @@ const server = http.createServer(async (req, res) => {
 resumeAll();
 resumeMeetings();
 if (allAgents().some((a) => a.computer)) warmBrowser();
+// Download any skill packs that aren't installed yet (needs git and internet; runs in the background).
+installAll({ onlyMissing: true }).catch(() => {});
 server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);

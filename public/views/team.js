@@ -1,7 +1,9 @@
 import {
   S, $, $$, api, esc, markdown, avatar, toast, view, composer, wireComposer, thinking, speakBtn,
-  openDialog, onSubmit, ago,
+  openDialog, onSubmit, ago, activityList,
 } from '../core.js';
+
+const ownsSkill = (s, id) => s.agentId === id || s.agentId === 'any' || (s.agentIds || []).includes(id) || (s.agentIds || []).includes('*');
 
 // ---------------------------------------------------------------- team grid
 
@@ -21,7 +23,7 @@ function agentCard(a) {
   const done = mine.filter((t) => t.status === 'done');
   const onTime = done.length ? Math.round((done.filter((t) => !t.late).length / done.length) * 100) : null;
   const current = mine.find((t) => t.status === 'in_progress');
-  const skills = Object.values(S.skills).filter((s) => s.agentId === a.id && s.status === 'active').length;
+  const skills = Object.values(S.skills).filter((s) => s.status === 'active' && ownsSkill(s, a.id)).length;
   const stat =
     a.id === 'ceo'
       ? [Object.keys(S.missions).length, 'missions', Object.keys(S.meetings).length, 'meetings', Object.keys(S.tasks).length, 'delegated']
@@ -148,7 +150,7 @@ function loginDialog(agentId) {
 
 export function assignDialog(agentId) {
   const a = S.agentById[agentId];
-  const skills = Object.values(S.skills).filter((s) => s.status === 'active' && (s.agentId === agentId || s.agentId === 'any'));
+  const skills = Object.values(S.skills).filter((s) => s.status === 'active' && ownsSkill(s, agentId));
   openDialog(
     `Assign a task to ${a.name}`,
     `<form class="form" data-form>
@@ -179,7 +181,11 @@ export async function renderAgent(agentId) {
   const history = S.chats[agentId];
   const v = view();
   const memory = S.memory[agentId] || [];
-  const skills = Object.values(S.skills).filter((s) => s.agentId === agentId || s.agentId === 'any');
+  const skills = Object.values(S.skills).filter((s) => ownsSkill(s, agentId));
+  const ownSkills = skills.filter((s) => !s.path);
+  const packSkills = skills.filter((s) => s.path);
+  const draft = v.dataset.chat === agentId ? $('[data-composer] textarea', v)?.value || '' : '';
+  v.dataset.chat = agentId;
 
   v.innerHTML = `
     <div class="topbar">${avatar(agentId)}<h2>${esc(a.name)} <span class="muted-title">· ${esc(a.role)}</span></h2>
@@ -216,13 +222,24 @@ export async function renderAgent(agentId) {
         </section>
         <section>
           <h4>Skills <span class="count">${skills.length}</span></h4>
-          <ul class="mem-list">${skills.map((s) => `<li><a class="link" href="#/skills">${esc(s.name)}</a><span class="status ${s.status === 'active' ? 'done' : 'review'}">${s.status}</span></li>`).join('') || '<li class="muted">No skills yet — teach one in Skills.</li>'}</ul>
+          <button class="btn-ghost small-btn" data-gen-skills title="Turns the role, responsibilities and specialties above into step-by-step skills">✨ Write skills from my role</button>
+          <ul class="mem-list">${ownSkills.map((s) => `<li><a class="link" href="#/skills">${esc(s.name)}</a><span class="status ${s.status === 'active' ? 'done' : 'review'}">${s.status}</span></li>`).join('') || '<li class="muted">No role skills yet.</li>'}</ul>
+          ${packSkills.length ? `<details class="pack-list"><summary>${packSkills.length} skills from skill packs</summary><ul class="mem-list">${packSkills.map((s) => `<li><span>${esc(s.name)}<small>${esc(String(s.summary).slice(0, 90))}</small></span></li>`).join('')}</ul></details>` : ''}
+        </section>
+        <section>
+          <h4>Activity</h4>
+          <div data-activity="${agentId}" data-limit="25">${activityList(S.activity.filter((x) => x.agentId === agentId), { limit: 25 })}</div>
         </section>
       </aside>
     </div>`;
   const scroll = $('.scroll', v);
   scroll.scrollTop = scroll.scrollHeight;
 
+  $('[data-gen-skills]', v).addEventListener('click', () =>
+    api(`/api/agents/${agentId}/generate-skills`, { method: 'POST' })
+      .then(() => toast(`${a.name} is writing skills from its role — they'll appear here in a minute.`))
+      .catch((e) => toast(e.message)),
+  );
   $('[data-assign]', v)?.addEventListener('click', () => assignDialog(agentId));
   $('[data-edit-bot]', v).addEventListener('click', () => editBotDialog(agentId));
   $('[data-login]', v)?.addEventListener('click', () => loginDialog(agentId));
@@ -243,7 +260,7 @@ export async function renderAgent(agentId) {
   });
   $$('[data-forget]', v).forEach((b) => b.addEventListener('click', () => api(`/api/agents/${agentId}/memory/${b.dataset.forget}`, { method: 'DELETE' })));
 
-  wireComposer(v, async (text) => {
+  const box = wireComposer(v, async (text) => {
     if (S.chatBusy) throw new Error(`${a.name} is still replying.`);
     S.chatBusy = true;
     const thread = $('[data-chat]', v);
@@ -274,6 +291,11 @@ export async function renderAgent(agentId) {
           const ev = JSON.parse(p.slice(5));
           if (ev.type === 'text') reply.content += ev.text;
           else if (ev.type === 'reasoning') reply.reasoning += ev.text;
+          else if (ev.type === 'turn') {
+            // text before a tool call was working-out-loud: show it under Thoughts
+            if (reply.content) reply.reasoning += `${reply.content}\n`;
+            reply.content = '';
+          } else if (ev.type === 'replace') reply.content = ev.content;
           else if (ev.type === 'error') reply.content += `\n\n> ⚠️ ${ev.text}`;
         }
         cancelAnimationFrame(frame);
@@ -288,6 +310,10 @@ export async function renderAgent(agentId) {
       if (S.route === `chat/${agentId}`) renderAgent(agentId); // pick up memory saved during the chat
     }
   });
+  if (draft) {
+    box.ta.value = draft;
+    box.resize();
+  }
 }
 
 function chatMsg(a, msg) {

@@ -21,6 +21,8 @@ export const state = {
   meetings: {}, // id -> meeting
   customAgents: {}, // id -> agent created in the UI
   agentOverrides: {}, // id -> edits to a built-in agent (name, role, persona, specialties, web)
+  activity: [], // live feed of what bots are doing
+  skillPacks: {}, // packId -> install status
   settings: {
     approvePlans: false,
     approveDeliverables: false,

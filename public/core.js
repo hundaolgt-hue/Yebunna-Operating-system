@@ -19,6 +19,8 @@ export const S = {
   expanded: new Set(),
   chatBusy: false,
   route: '',
+  activity: [],
+  packs: [],
 };
 
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -186,13 +188,20 @@ export function wireComposer(root, onSubmit) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = ta.value.trim();
-    if (!text) return;
-    btn.disabled = true;
+    if (!text || form.dataset.sending) return;
+    // Clear right away (live updates may re-render the page while the message is in flight);
+    // the text comes back only if sending fails.
+    form.dataset.sending = '1';
+    ta.value = '';
+    resize();
     try {
       await onSubmit(text, form);
-      ta.value = '';
     } catch (err) {
       toast(err.message);
+      const box = form.isConnected ? ta : document.querySelector('#view [data-composer] textarea');
+      if (box && !box.value) box.value = text;
+    } finally {
+      delete form.dataset.sending;
     }
     resize();
   });
@@ -260,4 +269,22 @@ export function onSubmit(form, handler) {
     }
     btn && (btn.disabled = false);
   });
+}
+
+// ---------------------------------------------------------------- activity feed
+
+const refLink = (ref) =>
+  !ref ? null : ref.type === 'task' ? `#/m/${ref.missionId}/${ref.id}` : ref.type === 'mission' ? `#/m/${ref.id}` : ref.type === 'chat' ? `#/chat/${ref.agentId}` : ref.type === 'meeting' ? `#/meetings/${ref.id}` : null;
+
+/** What the bots are doing, newest first. */
+export function activityList(items, { limit = 60, empty = 'No activity yet.' } = {}) {
+  const list = [...items].reverse().slice(0, limit);
+  if (!list.length) return `<div class="empty small">${empty}</div>`;
+  return `<ul class="activity">${list
+    .map((a) => {
+      const link = refLink(a.ref);
+      const body = `${avatar(a.agentId, 'sm')}<span><b>${esc(agentName(a.agentId))}</b> ${esc(a.text)}<small>${ago(a.at)}</small></span>`;
+      return `<li>${link ? `<a href="${link}">${body}</a>` : body}</li>`;
+    })
+    .join('')}</ul>`;
 }

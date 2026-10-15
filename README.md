@@ -34,7 +34,9 @@ Agents marked 🌐 can search and read the web while they work, like Grok's real
 | **Team meetings / group chat** | Put 2–6 bots in a room (**Meetings**). The CEO moderates, the bots take turns and react to each other by name, and you can jump in. The meeting ends with minutes, decisions and action items that start as a mission with one click, or automatically. |
 | **Standups** | One click (**☀️ Standup now**) or a routine. Each bot reports what it finished, what's next and its blockers, from its real task list. |
 | **Teach a task (watch and learn)** | **Skills → Teach a task.** Share your screen and do the workflow once, narrating by typing or speaking. Changed frames are captured. The bot then opens the screenshots with Claude Code's Read tool and drafts a skill for you to review, edit, activate and test-run. |
-| **Skills** | Reusable procedures (steps, decision rules, output requirements, approval boundaries). Write them by hand, teach them by demo, or click **💾 Save as skill** on a finished task. Active skills go into the bot's instructions, and the CEO routes work to bots whose skills match. |
+| **Skills** | Reusable procedures (steps, decision rules, output requirements, approval boundaries). Write them by hand, teach them by demo, click **💾 Save as skill** on a finished task, or click **✨ Write skills from my role** so a bot turns its role, responsibilities and specialties into skills. Active skills go into the bot's instructions, and the CEO routes work to bots whose skills match. |
+| **Skill packs** | Community libraries, the same ones `npx skills add` installs, downloaded with git into `workspace/.skills/` on first start and given to the right bots. The packs are: Taste Skill (design-taste-frontend), Build Awwwards-quality sites, find-skills, Corey Haines' marketing skills, Charlie Hills' social-media skills, Superpowers subagent-driven-development, Anthropic's PDF skill, and Addy Osmani's agent-skills. Bots see each skill's name and description, and open its SKILL.md when a task matches. Change which bots use a skill under **Skills → Skill library → Bots**. |
+| **Live activity** | Everything bots do (assignments, tools used, deliveries, reviews, chats, meetings, routines) streams into the **Task board**, and each bot's page shows its own feed. |
 | **Routines (schedules and triggers)** | Every N hours, daily, weekly, or when a mission or task completes. A routine can assign a task, run a skill, have the CEO plan a whole mission, or hold a standup. Includes run history and **Run now**. |
 | **Memory** | Each bot keeps its own memory. A one-line note is saved after every finished task, and you can add notes by hand or say "remember …" in chat. Memory goes into every prompt for that bot. |
 | **Approvals** | **Settings:** require your OK on the CEO's plan before work starts, and/or on every deliverable (**Approve / Request changes** with feedback). |
@@ -48,6 +50,13 @@ Agents marked 🌐 can search and read the web while they work, like Grok's real
 
 One Grok Bot feature isn't included:
 - **Joining Zoom or Google Meet calls.** xAI hasn't released it either, and a local app can't join calls without platform integrations.
+
+## Troubleshooting
+
+- **Skill packs say "git is not installed".** Install Git for Windows, then click **Skills → Install / update all**.
+- **Python tasks fail.** Install Python from python.org and tick "Add python.exe to PATH". Then run `pip install openpyxl pandas pypdf pdfplumber reportlab` once (the PDF skill uses the last three).
+- **"Claude Code is not logged in".** Run `claude`, type `/login`, choose your Claude subscription, then type `/exit`.
+- **A bot runs long.** Each run has a step budget and a 45-minute time limit (`RUN_TIMEOUT_MINUTES`). A bot that runs out of steps hands in what it has or takes one "finish now" pass. At most `MAX_CONCURRENT_RUNS` (default 4) Claude processes run at once.
 
 ## Run it
 
@@ -81,6 +90,8 @@ This setup is for your own use on your own machine. Anthropic doesn't allow offe
 | `MAX_PARALLEL_TASKS` | `3` | Agents working at the same time |
 | `MAX_REVISIONS` | `1` | Times the CEO may send work back |
 | `DEMO_MODE` | `0` | `1` forces the offline demo |
+| `MAX_CONCURRENT_RUNS` | `4` | Claude Code processes allowed at once (tasks, chats, meetings) |
+| `RUN_TIMEOUT_MINUTES` | `45` | Longest a single bot run may take before it is stopped |
 | `DATA_DIR` | `./data` | Where missions, memory, skills and routines are saved (`state.json`) |
 | `WORKSPACE_DIR` | `./workspace` | The shared folder bots work in |
 
@@ -93,6 +104,8 @@ src/orchestrator.js  CEO loop: plan → approve → delegate → run → review 
 src/meetings.js      team meetings & standups → minutes → action items
 src/skills.js        skills, save-as-skill, watch-and-learn teaching
 src/routines.js      schedules and event triggers
+src/skillpacks.js    downloads skill packs (git) and assigns them to bots
+src/activity.js      live activity feed
 src/llm.js           Claude Code bridge (headless `claude -p`, streamed)
 src/demo.js          offline demo engine
 src/store.js         JSON persistence (missions survive restarts and resume)
