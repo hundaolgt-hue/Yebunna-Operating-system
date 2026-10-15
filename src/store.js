@@ -21,7 +21,13 @@ export const state = {
   meetings: {}, // id -> meeting
   customAgents: {}, // id -> agent created in the UI
   agentOverrides: {}, // id -> edits to a built-in agent (name, role, persona, specialties, web)
-  settings: { approvePlans: false, approveDeliverables: false },
+  settings: {
+    approvePlans: false,
+    approveDeliverables: false,
+    terminal: true, // let bots run shell commands (Bash, e.g. Python) in the workspace
+    browserHeadless: false, // false = you can watch the bot's browser and take over
+    browser: process.platform === 'win32' ? 'msedge' : 'chrome', // Edge ships with Windows
+  },
 };
 
 try {

@@ -6,7 +6,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAgent, systemPrompt, remember } from './agents.js';
+import { getAgent, systemPrompt, remember, toolsFor } from './agents.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, newId, now, slugify, WORKSPACE } from './store.js';
 import { demoPlan, demoOutput, demoReview, demoSummary } from './demo.js';
@@ -273,7 +273,8 @@ async function answer(m, question) {
         content: `Mission: ${m.goal}\nDeadline: ${fmt(m.deadline)}\nFiles: ${m.folder}/\n\nTeam progress:\n${status || '(nothing yet)'}\n\nFounder asks: ${question}\n\nAnswer as the CEO. Do not delegate new work in this reply.`,
       },
     ],
-    tools: ceo().tools,
+    tools: toolsFor(ceo()),
+    agentId: 'ceo',
     demo: () => `Good question. Right now ${missionTasks(m).filter((t) => t.status === 'done').length} of ${m.taskIds.length} tasks are done. My recommendation: keep the scope tight and ship. (Demo mode — log in to Claude Code for a real answer.)`,
   });
   emitMission(m);
@@ -355,7 +356,9 @@ with a short "Files" list of anything you saved.`,
           },
         ],
         effort: 'high',
-        tools: agent.tools,
+        tools: toolsFor(agent),
+        agentId: agent.id,
+        maxTurns: agent.computer ? 60 : 25,
         signal: signal(m),
         demo: () => demoOutput(t.agentId, t, m.goal),
       },

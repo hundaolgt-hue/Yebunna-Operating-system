@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { allAgents, getAgent, publicAgent, systemPrompt, createAgent, updateAgent, resetAgent, deleteAgent, remember, forget } from './src/agents.js';
+import { allAgents, getAgent, publicAgent, systemPrompt, createAgent, updateAgent, resetAgent, deleteAgent, remember, forget, toolsFor, setComputerForAll } from './src/agents.js';
 import { state, save, now, WORKSPACE } from './src/store.js';
-import { providerInfo, streamChat, detectionReport } from './src/llm.js';
+import { providerInfo, streamChat, complete, detectionReport, warmBrowser } from './src/llm.js';
 import { demoChat } from './src/demo.js';
 import {
   bus,
@@ -141,7 +141,8 @@ const routes = {
   'GET /api/settings': (req, res) => send(res, 200, state.settings),
   'PUT /api/settings': async (req, res) => {
     const body = await readBody(req);
-    for (const k of ['approvePlans', 'approveDeliverables']) if (k in body) state.settings[k] = Boolean(body[k]);
+    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless']) if (k in body) state.settings[k] = Boolean(body[k]);
+    if (['chrome', 'msedge', 'firefox'].includes(body.browser)) state.settings.browser = body.browser;
     save();
     bus.emit('event', { type: 'settings', settings: state.settings });
     send(res, 200, state.settings);
@@ -197,9 +198,58 @@ const routes = {
     bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
     send(res, 201, publicAgent(a));
   },
+  'POST /api/agents/computer': async (req, res) => {
+    const { enabled } = await readBody(req);
+    setComputerForAll(Boolean(enabled));
+    if (enabled) warmBrowser();
+    bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
+    send(res, 200, { ok: true });
+  },
+  // Open the bot's own browser on a site so the founder can log in by hand; the
+  // login is kept in that bot's browser profile for future tasks.
+  'POST /api/agents/:id/browser-login': async (req, res, { id }) => {
+    const agent = getAgent(id);
+    need(agent, 404, 'agent not found');
+    need(agent.computer, 400, `Turn on computer use for ${agent.name} first.`);
+    let { url } = await readBody(req);
+    url = String(url || '').trim();
+    if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+    need(/^https?:\/\/[^\s]+$/i.test(url), 400, 'Enter a website address, e.g. mail.google.com');
+    send(res, 202, { ok: true });
+    const notice = (text) => {
+      (state.chats[id] ||= []).push({ role: 'assistant', content: text, at: now() });
+      save();
+      bus.emit('event', { type: 'notice', agentId: id, text });
+    };
+    try {
+      const reply = await complete({
+        system: systemPrompt(agent),
+        messages: [
+          {
+            role: 'user',
+            content: `The founder wants to log in to ${url} in YOUR browser so you can use that site in later tasks.
+1. Open ${url} with browser_navigate.
+2. Do NOT type any credentials yourself. The founder will log in by hand in the visible browser window.
+3. Wait for them: call browser_wait_for with time 20, then take a browser_snapshot to check whether they are
+   logged in. Repeat up to 12 times (about 4 minutes) until the page clearly shows a logged-in state.
+4. Reply in ONE short line: whether the login on ${url} succeeded and that it is saved for future tasks.`,
+          },
+        ],
+        tools: ['mcp__browser'],
+        agentId: id,
+        maxTurns: 40,
+        effort: 'low',
+        demo: () => `Demo mode: in live mode a browser window opens on ${url} for you to log in.`,
+      });
+      notice(reply.trim() || `Finished the login session for ${url}.`);
+    } catch (e) {
+      notice(`⚠️ Login session for ${url} failed: ${e.message}`);
+    }
+  },
   'PUT /api/agents/:id': async (req, res, { id }) => {
     const a = updateAgent(id, await readBody(req));
     need(a, 404, 'agent not found');
+    if (a.computer) warmBrowser();
     bus.emit('event', { type: 'agents', agents: allAgents().map(publicAgent) });
     send(res, 200, publicAgent(a));
   },
@@ -280,7 +330,9 @@ const routes = {
       for await (const ev of streamChat({
         system: `${systemPrompt(agent)}\n\nYou are chatting 1:1 with the founder.${work ? `\nYour recent assignments:\n${work}` : ''}${rememberMatch ? '\nThe founder just asked you to remember something; it is saved to your memory — confirm briefly.' : ''}`,
         messages: history.slice(-20).map(({ role, content }) => ({ role, content })),
-        tools: agent.tools,
+        tools: toolsFor(agent),
+        agentId,
+        maxTurns: agent.computer ? 60 : 25,
         signal: abort.signal,
         demo: () => demoChat(agentId, text),
       })) {
@@ -437,6 +489,7 @@ const server = http.createServer(async (req, res) => {
 
 resumeAll();
 resumeMeetings();
+if (allAgents().some((a) => a.computer)) warmBrowser();
 server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);

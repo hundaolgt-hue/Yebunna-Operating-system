@@ -1,5 +1,5 @@
 // Yebunna OS — client entry: router, sidebar, live event stream, countdown clocks.
-import { S, $, $$, api, esc, markdown, view, setAgents, due, missionDue, sortedMissions } from './core.js';
+import { S, $, $$, api, esc, markdown, view, setAgents, due, missionDue, sortedMissions, toast } from './core.js';
 import { renderHome } from './views/home.js';
 import { renderMission } from './views/mission.js';
 import { renderBoard } from './views/board.js';
@@ -120,8 +120,11 @@ function refresh(type) {
       case 'chat':
         if (!S.chatBusy && ['memory', 'skill', 'skill.deleted', 'agents'].includes(type)) return renderAgent(parts[1]);
         return;
+      case 'settings':
+        if (['agents', 'settings'].includes(type)) return renderSettings();
+        return;
       default:
-        return; // home, files, settings: nothing live to redraw
+        return; // home, files: nothing live to redraw
     }
   });
 }
@@ -170,6 +173,10 @@ function onEvent(e) {
     S.settings = e.settings;
   } else if (e.type === 'agents') {
     setAgents(e.agents);
+  } else if (e.type === 'notice') {
+    toast(`${S.agentById[e.agentId]?.name || 'Bot'}: ${e.text}`);
+    delete S.chats[e.agentId]; // reload the chat so the notice shows there
+    return refresh('memory');
   }
   refresh(e.type);
 }

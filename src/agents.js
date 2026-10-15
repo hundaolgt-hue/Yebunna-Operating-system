@@ -12,6 +12,8 @@ Use Markdown: short headings, bullet lists, tables where useful, and code blocks
 // cloud computer). Some also get live web access, like Grok's real-time search.
 const FILES = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 const WEB = ['WebSearch', 'WebFetch'];
+// Computer use: a real web browser the bot drives (Playwright MCP server named "browser").
+export const BROWSER_TOOL = 'mcp__browser';
 
 const BUILTIN = [
   {
@@ -95,13 +97,13 @@ FAQs, support macros and lifecycle emails, and set up feedback loops that feed t
 
 // Built-ins without explicit tools get file access only.
 for (const a of BUILTIN) {
-  a.tools ||= a.id === 'ceo' ? ['Read', 'Glob', 'Grep'] : FILES;
+  a.tools ||= FILES;
   a.persona = a.persona.replace(/\s*\n\s*/g, ' '); // one paragraph, so it edits cleanly in the UI
 }
 
 const COLORS = ['#c084fc', '#2dd4bf', '#f87171', '#a3e635', '#818cf8', '#fda4af', '#facc15', '#38bdf8'];
 
-const baseTools = (a) => (a.id === 'ceo' ? ['Read', 'Glob', 'Grep'] : FILES);
+const baseTools = () => FILES;
 
 /** Built-ins with any edits from the UI applied on top. */
 function withOverrides(a) {
@@ -128,7 +130,7 @@ export function specialists() {
 }
 
 /** Create a new bot: pick a name, a main job and a description (Grok Bot's "create your own"). */
-export function createAgent({ name, role, description, specialties = [], web = false }) {
+export function createAgent({ name, role, description, specialties = [], web = false, computer = false }) {
   const id = newId('bot');
   const agent = {
     id,
@@ -138,6 +140,7 @@ export function createAgent({ name, role, description, specialties = [], web = f
     specialties: specialties.map(String).filter(Boolean).slice(0, 6),
     persona: `You are ${name}, the team's ${role}. ${description || ''}`.trim(),
     tools: web ? [...FILES, ...WEB] : FILES,
+    computer: Boolean(computer),
     custom: true,
     createdAt: now(),
   };
@@ -147,13 +150,14 @@ export function createAgent({ name, role, description, specialties = [], web = f
 }
 
 /** Edit any bot's name, role, responsibilities/personality, specialties and web access. */
-export function updateAgent(id, { name, role, persona, specialties, web }) {
+export function updateAgent(id, { name, role, persona, specialties, web, computer }) {
   const patch = {};
   if (name !== undefined) patch.name = String(name).trim().slice(0, 40) || undefined;
   if (role !== undefined) patch.role = String(role).trim().slice(0, 80) || undefined;
   if (persona !== undefined) patch.persona = String(persona).trim().slice(0, 4000) || undefined;
   if (specialties !== undefined) patch.specialties = (Array.isArray(specialties) ? specialties : String(specialties).split(',')).map((x) => String(x).trim()).filter(Boolean).slice(0, 8);
   if (web !== undefined) patch.web = Boolean(web);
+  if (computer !== undefined) patch.computer = Boolean(computer);
   for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
 
   const custom = state.customAgents[id];
@@ -168,6 +172,20 @@ export function updateAgent(id, { name, role, persona, specialties, web }) {
   }
   save();
   return getAgent(id);
+}
+
+/** Every tool a bot may use right now: its own tools, plus computer use and the terminal if enabled. */
+export function toolsFor(agent) {
+  return [
+    ...agent.tools,
+    ...(agent.computer ? [BROWSER_TOOL] : []),
+    ...(state.settings.terminal ? ['Bash'] : []),
+  ];
+}
+
+/** Turn computer use on or off for every bot at once. */
+export function setComputerForAll(enabled) {
+  for (const a of allAgents()) updateAgent(a.id, { computer: enabled });
 }
 
 /** Undo all edits to a built-in bot. */
@@ -223,7 +241,27 @@ export function systemPrompt(agent) {
   return `${agent.persona}
 
 ${COMPANY}
-${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}
+${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}${
+    agent.computer
+      ? `\nCOMPUTER USE: you control a real web browser through the browser_* tools (navigate, click, type, fill forms,
+select, upload, take snapshots and screenshots, manage tabs). Use it when a website has no API, to check how a
+page really looks, or to operate web apps. Read the page snapshot before acting. Rules (approval boundaries):
+- Never buy anything, send messages or emails, publish or post, delete data, or change account or billing
+  settings unless your assignment explicitly tells you to do exactly that.
+- Never type passwords, 2FA codes or payment details, and never try to solve CAPTCHAs. If a site needs a
+  login, stop and say which site the founder must log into with the "Log in to a site" button on your page.
+- Close tabs you opened when you are done, and report what you did in the browser.\n`
+      : ''
+  }${
+    state.settings.terminal
+      ? `\nTERMINAL: you can run shell commands (Bash) in the workspace folder — e.g. run Python scripts to build,
+recalculate and check spreadsheets (openpyxl/pandas), process data, or test code — so the founder doesn't have
+to open the files to verify your work. Check results yourself before you report them. Never run destructive
+commands, never touch files outside the workspace, never install software globally (a local
+"pip install --user" or a project virtualenv is fine when needed), and never run anything that sends
+messages, publishes, or spends money.\n`
+      : ''
+  }
 Your current directory is the company's shared workspace. Teammates' files live there too
 (missions/<mission>/...). Read them when useful. Save real artifacts you create (code, copy, data,
 docs) as files in the folder your assignment names. Never touch files outside the workspace.
@@ -238,6 +276,6 @@ ${memory.length ? `\nYour memory (preferences and summaries of past work — ver
 }
 
 export function publicAgent(a) {
-  const { id, name, role, color, specialties, tools = [], custom = false, edited = false } = a;
-  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), custom, edited, persona: a.persona };
+  const { id, name, role, color, specialties, tools = [], custom = false, edited = false, computer = false } = a;
+  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), computer, custom, edited, persona: a.persona };
 }

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { demoStream } from './demo.js';
-import { WORKSPACE } from './store.js';
+import { WORKSPACE, state } from './store.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -55,9 +55,54 @@ export function detectionReport() {
 
 
 // Strip API credentials so the CLI uses the subscription login, not API billing.
-const childEnv = { ...process.env };
+const childEnv = { ...process.env, MCP_TIMEOUT: process.env.MCP_TIMEOUT || '90000' };
 delete childEnv.ANTHROPIC_API_KEY;
 delete childEnv.ANTHROPIC_AUTH_TOKEN;
+
+// ---- computer use: a real browser per bot (Playwright MCP) ------------------------
+const BROWSER_PKG = '@playwright/mcp@0.0.83';
+const BROWSER_DIR = path.join(WORKSPACE, '.browser');
+const profilesInUse = new Set();
+const npx = (args) => (process.platform === 'win32' ? { command: 'cmd', args: ['/c', 'npx', ...args] } : { command: 'npx', args });
+
+/**
+ * Write an MCP config that gives this run a browser. Each bot has its own persistent
+ * profile (so sites it was logged into stay logged in); if that profile is already
+ * open in another run, this run gets a throwaway in-memory profile instead.
+ */
+function browserConfig(agentId = 'shared') {
+  const profile = path.join(BROWSER_DIR, 'profiles', agentId);
+  const exclusive = !profilesInUse.has(profile);
+  const args = ['-y', BROWSER_PKG, '--browser', state.settings.browser || 'chrome', '--output-dir', path.join(BROWSER_DIR, 'output')];
+  if (exclusive) {
+    fs.mkdirSync(profile, { recursive: true });
+    profilesInUse.add(profile);
+    args.push('--user-data-dir', profile);
+  } else {
+    args.push('--isolated');
+  }
+  if (state.settings.browserHeadless) args.push('--headless');
+  if (process.env.BROWSER_EXECUTABLE) args.push('--executable-path', process.env.BROWSER_EXECUTABLE);
+  if (process.env.BROWSER_EXTRA_ARGS) args.push(...process.env.BROWSER_EXTRA_ARGS.split(' ').filter(Boolean));
+  fs.mkdirSync(BROWSER_DIR, { recursive: true });
+  const file = path.join(BROWSER_DIR, `mcp-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`);
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { browser: npx(args) } }));
+  return {
+    file,
+    release() {
+      if (exclusive) profilesInUse.delete(profile);
+      fs.rm(file, { force: true }, () => {});
+    },
+  };
+}
+
+/** Download the browser tool ahead of time so the first computer-use task starts fast. */
+export function warmBrowser() {
+  if (demoMode) return;
+  const { command, args } = npx(['-y', BROWSER_PKG, '--version']);
+  const p = spawn(command, args, { stdio: 'ignore', windowsHide: true, cwd: WORKSPACE });
+  p.on('error', () => {});
+}
 
 export function providerInfo() {
   return demoMode
@@ -81,9 +126,10 @@ function toPrompt(messages) {
  * effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' — how hard the agent thinks.
  * tools:  Claude Code tools the agent may use, e.g. ['Read', 'Write', 'WebSearch'].
  * model:  optional model alias for this call (e.g. 'haiku' for cheap housekeeping).
+ * agentId: which bot is running — picks its own browser profile for computer use.
  * demo:   function returning the scripted answer used in offline demo mode.
  */
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 25, signal, demo }) {
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 25, agentId, signal, demo }) {
   if (demoMode) {
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;
@@ -98,10 +144,12 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     '--setting-sources', '',
     '--system-prompt', system,
     '--effort', effort,
-    '--tools', tools.join(','),
+    '--tools', tools.filter((t) => !t.startsWith('mcp__')).join(','),
   ];
   if (tools.length) args.push('--allowedTools', ...tools, '--max-turns', String(maxTurns));
   if (model || MODEL) args.push('--model', model || MODEL);
+  const browser = tools.includes('mcp__browser') ? browserConfig(agentId) : null;
+  if (browser) args.push('--mcp-config', browser.file, '--strict-mcp-config');
 
   const child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const kill = () => child.kill('SIGTERM');
@@ -144,6 +192,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     }
   } finally {
     signal?.removeEventListener('abort', kill);
+    browser?.release();
   }
 
   const code = await exited;

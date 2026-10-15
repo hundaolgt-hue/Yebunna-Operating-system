@@ -27,7 +27,7 @@ function agentCard(a) {
       ? [Object.keys(S.missions).length, 'missions', Object.keys(S.meetings).length, 'meetings', Object.keys(S.tasks).length, 'delegated']
       : [done.length, 'delivered', onTime === null ? '—' : `${onTime}%`, 'on time', skills, 'skills'];
   return `<div class="agent-card">
-    <div class="top">${avatar(a.id, 'lg')}<div><div class="name">${esc(a.name)}${a.web ? '<span class="web-badge">🌐 web</span>' : ''}${a.custom ? '<span class="web-badge">custom</span>' : ''}</div><div class="role">${esc(a.role)}</div></div></div>
+    <div class="top">${avatar(a.id, 'lg')}<div><div class="name">${esc(a.name)}${a.web ? '<span class="web-badge">🌐 web</span>' : ''}${a.computer ? '<span class="web-badge">🖥 computer</span>' : ''}${a.custom ? '<span class="web-badge">custom</span>' : ''}</div><div class="role">${esc(a.role)}</div></div></div>
     <div class="tags">${a.specialties.map((s) => `<span class="tag-s">${esc(s)}</span>`).join('')}</div>
     <div class="stats">${[0, 2, 4].map((i) => `<div><b>${stat[i]}</b><span>${stat[i + 1]}</span></div>`).join('')}</div>
     <div class="now">${current ? `<span class="dot running inline"></span>Working on: ${esc(current.title)}` : `<span style="color:var(--faint)">Available · ${(S.memory[a.id] || []).length} memories</span>`}</div>
@@ -55,6 +55,7 @@ export function newBotDialog() {
       <label>Description<textarea name="description" rows="3" placeholder="How it works, what it's great at, its personality"></textarea></label>
       <label>Specialties <small>(comma separated)</small><input name="specialties" placeholder="Sales pages, Email, Hooks" /></label>
       <label class="check"><input type="checkbox" name="web" /> Can search the web</label>
+      <label class="check"><input type="checkbox" name="computer" /> 🖥 Computer use — controls a real web browser</label>
       <div class="row-btns end"><button class="btn" type="submit">Create bot</button></div>
     </form>`,
     (dlg, close) => {
@@ -94,6 +95,7 @@ export function editBotDialog(agentId) {
       <label>Specialties <small>(comma separated — the CEO uses these to decide who gets which task)</small>
         <input name="specialties" value="${esc(a.specialties.join(', '))}" /></label>
       <label class="check"><input type="checkbox" name="web" ${a.web ? 'checked' : ''} /> Can search the web</label>
+      <label class="check"><input type="checkbox" name="computer" ${a.computer ? 'checked' : ''} /> 🖥 Computer use — controls a real web browser (open sites, click, type, fill forms)</label>
       ${isCeo ? '<p class="faint small" style="margin:0">The CEO keeps its planning, delegation and review duties whatever you write here.</p>' : ''}
       <div class="row-btns end">
         ${a.edited ? '<button type="button" class="btn-ghost" data-reset>Reset to default</button>' : ''}
@@ -121,6 +123,26 @@ export function editBotDialog(agentId) {
         toast(`${updated.name} updated — new tasks use the new role.`);
       });
     },
+  );
+}
+
+/** Open the bot's own browser on a site so the founder logs in by hand (the bot never sees the password). */
+function loginDialog(agentId) {
+  const a = S.agentById[agentId];
+  openDialog(
+    `Log in to a site for ${a.name}`,
+    `<form class="form" data-form>
+      <p class="side-text">A browser window opens on this site. Log in yourself within about 4 minutes — ${esc(a.name)} waits and never sees your password. The login stays saved in ${esc(a.name)}'s browser for future tasks.</p>
+      <label>Website<input name="url" required placeholder="e.g. mail.google.com, business.facebook.com, ye-buna.com" /></label>
+      ${S.settings.browserHeadless ? '<p class="faint small" style="margin:0">Note: “Show the browser window” is off in Settings, so you won\'t see the window. Turn it on first.</p>' : ''}
+      <div class="row-btns end"><button class="btn" type="submit">Open browser</button></div>
+    </form>`,
+    (dlg, close) =>
+      onSubmit($('[data-form]', dlg), async (d) => {
+        await api(`/api/agents/${agentId}/browser-login`, { method: 'POST', body: d });
+        close();
+        toast('Opening the browser — log in there. The result will appear in this chat.');
+      }),
   );
 }
 
@@ -162,6 +184,7 @@ export async function renderAgent(agentId) {
   v.innerHTML = `
     <div class="topbar">${avatar(agentId)}<h2>${esc(a.name)} <span class="muted-title">· ${esc(a.role)}</span></h2>
       <div class="meta">
+        ${a.computer ? '<button class="btn-ghost" data-login>🔑 Log in to a site</button>' : ''}
         <button class="btn-ghost" data-edit-bot>✎ Edit role</button>
         ${agentId !== 'ceo' ? '<button class="btn-ghost" data-assign>Assign task</button>' : ''}
         <button class="btn-ghost" data-clear>Clear chat</button>
@@ -180,7 +203,7 @@ export async function renderAgent(agentId) {
         <section>
           <h4>About</h4>
           <p class="side-text">${esc(a.persona || '')}</p>
-          <div class="tags">${a.specialties.map((s) => `<span class="tag-s">${esc(s)}</span>`).join('')}${a.web ? '<span class="tag-s">🌐 web search</span>' : ''}<span class="tag-s">📁 workspace files</span></div>
+          <div class="tags">${a.specialties.map((s) => `<span class="tag-s">${esc(s)}</span>`).join('')}${a.web ? '<span class="tag-s">🌐 web search</span>' : ''}<span class="tag-s">📁 read & write files</span>${S.settings.terminal ? '<span class="tag-s">⌨️ terminal</span>' : ''}${a.computer ? '<span class="tag-s">🖥 computer use</span>' : ''}</div>
         </section>
         <section>
           <h4>Memory <span class="count">${memory.length}</span></h4>
@@ -202,6 +225,7 @@ export async function renderAgent(agentId) {
 
   $('[data-assign]', v)?.addEventListener('click', () => assignDialog(agentId));
   $('[data-edit-bot]', v).addEventListener('click', () => editBotDialog(agentId));
+  $('[data-login]', v)?.addEventListener('click', () => loginDialog(agentId));
   $('[data-clear]', v).addEventListener('click', async () => {
     await api(`/api/chats/${agentId}`, { method: 'DELETE' });
     S.chats[agentId] = [];

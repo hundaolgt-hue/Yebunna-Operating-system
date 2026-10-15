@@ -38,15 +38,16 @@ Agents marked 🌐 can search and read the web while they work, like Grok's real
 | **Routines (schedules and triggers)** | Every N hours, daily, weekly, or when a mission or task completes. A routine can assign a task, run a skill, have the CEO plan a whole mission, or hold a standup. Includes run history and **Run now**. |
 | **Memory** | Each bot keeps its own memory. A one-line note is saved after every finished task, and you can add notes by hand or say "remember …" in chat. Memory goes into every prompt for that bot. |
 | **Approvals** | **Settings:** require your OK on the CEO's plan before work starts, and/or on every deliverable (**Approve / Request changes** with feedback). |
-| **Shared workspace (cloud computer)** | A real folder (`./workspace`) that every bot reads and writes with Claude Code's file tools. Browse, preview and download in **Files**. |
+| **Shared workspace (cloud computer)** | A real folder (`./workspace`) that every bot, CEO included, reads, writes and edits with Claude Code's file tools. Browse, preview and download in **Files**. |
+| **Terminal** | On by default (**Settings → Terminal**). Every bot can run commands in the workspace, e.g. Python to build, recalculate and check spreadsheets. On Windows this needs Git for Windows, plus Python for Python scripts. |
+| **Computer use (browser control)** | **Settings → Turn on for all bots**, or per bot under **Edit**. The bot drives a real browser (Edge, Chrome or Firefox) through the Playwright MCP server: it opens sites, clicks, types and fills forms. Each bot has its own browser profile. **🔑 Log in to a site** opens that browser so *you* log in, and the login stays saved. Bots never type passwords, solve CAPTCHAs, or buy, send, publish or delete anything unless the task says so. |
 | **Live web search** | Nova, Echo, Ledger, and any bot you create with "web" turned on, use WebSearch and WebFetch. |
 | **Create your own bots** | **Team → Create a bot:** pick a preset or write a name, main job, description and specialties. |
 | **Direct assignments** | **Assign task** on any bot, with a deadline and an optional skill. No CEO planning step. |
 | **Voice** | 🎙 dictation in every message box and 🔊 read-aloud on replies, using the browser's speech features (Chrome or Edge). |
 
-Two Grok Bot features aren't included:
+One Grok Bot feature isn't included:
 - **Joining Zoom or Google Meet calls.** xAI hasn't released it either, and a local app can't join calls without platform integrations.
-- **Remote browser control of other sites.** Bots use web search and fetch instead.
 
 ## Run it
 
