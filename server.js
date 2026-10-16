@@ -579,7 +579,7 @@ resumeAll();
 resumeMeetings();
 if (allAgents().some((a) => a.computer)) warmBrowser();
 // Download any skill packs that aren't installed yet (needs git and internet; runs in the background).
-installAll({ onlyMissing: true }).catch(() => {});
+if (process.env.SKILL_PACKS !== '0') installAll({ onlyMissing: true }).catch(() => {});
 server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);

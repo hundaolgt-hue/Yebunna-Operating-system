@@ -74,6 +74,8 @@ cp .env.example .env                       # optional settings
 npm start                                  # → http://localhost:3000
 ```
 
+Run `npm test` for an end-to-end smoke test: it starts the server in demo mode with throwaway folders and drives missions, plan approval, chat, bots, meetings, skills and routines through the API (about 2 minutes).
+
 There are no npm dependencies. If the `claude` CLI isn't found, or `DEMO_MODE=1` is set, the app runs an offline scripted demo so you can explore the UI.
 
 ### How it uses your subscription
@@ -96,6 +98,7 @@ This setup is for your own use on your own machine. Anthropic doesn't allow offe
 | `RUN_TIMEOUT_MINUTES` | `45` | Longest a single bot run may take before it is stopped |
 | `DATA_DIR` | `./data` | Where missions, memory, skills and routines are saved (`state.json`) |
 | `WORKSPACE_DIR` | `./workspace` | The shared folder bots work in |
+| `SKILL_PACKS` | `1` | `0` skips downloading skill packs at startup (offline use, tests) |
 
 ## Project layout
 
@@ -111,6 +114,7 @@ src/activity.js      live activity feed
 src/llm.js           Claude Code bridge (headless `claude -p`, streamed)
 src/demo.js          offline demo engine
 src/store.js         JSON persistence (missions survive restarts and resume)
+test/smoke.test.js   end-to-end API test in demo mode (`npm test`)
 public/              the UI (vanilla JS modules, no build step)
 ```
 
