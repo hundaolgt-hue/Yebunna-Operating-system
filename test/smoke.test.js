@@ -201,3 +201,15 @@ test('state is saved to disk', async () => {
   const saved = JSON.parse(fs.readFileSync(path.join(TMP, 'data', 'state.json'), 'utf8'));
   assert.equal(Object.keys(saved.missions).length, before);
 });
+
+test('a pasted Meta token is cleaned, a broken one is refused, and an empty box keeps the saved one', async () => {
+  const good = 'EAAB' + 'x'.repeat(40);
+  let r = await api('PUT', '/api/connections/meta', { config: { token: `  "Bearer ${good.slice(0, 20)}\n${good.slice(20)}" `, adAccountId: 'act_1' }, bots: ['marketing'] });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.config.token, '••••••' + good.slice(-4), 'quotes, Bearer and line breaks removed');
+  r = await api('PUT', '/api/connections/meta', { config: { token: 'my-facebook-password' } });
+  assert.equal(r.status, 400, 'not a Meta token');
+  r = await api('PUT', '/api/connections/meta', { config: { token: '' } });
+  assert.equal(r.body.config.token, '••••••' + good.slice(-4), 'still the good token');
+  await api('DELETE', '/api/connections/meta');
+});

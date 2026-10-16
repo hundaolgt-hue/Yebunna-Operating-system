@@ -105,19 +105,33 @@ export function listConnections() {
 export function saveConnection(id, { config = {}, bots, enabled }) {
   const svc = SERVICES[id];
   if (!svc) throw new Error('Unknown connection');
-  const c = (conns()[id] = { ...get(id), config: { ...(get(id).config || {}) } });
+  const c = { ...get(id), config: { ...(get(id).config || {}) } }; // stored only once it checks out
   for (const f of svc.fields) {
     const v = config[f.key];
     if (v === undefined) continue;
-    if (f.secret && String(v).startsWith('••••••')) continue; // unchanged masked value
-    c.config[f.key] = String(v).trim();
+    // Secret boxes are left empty to keep the saved value (Disconnect clears it).
+    if (f.secret && (!String(v).trim() || String(v).startsWith('••••••'))) continue;
+    c.config[f.key] = f.secret ? cleanToken(v) : String(v).trim();
   }
+  if (id === 'meta' && c.config.token && !/^EA[A-Za-z0-9]{20,}$/.test(c.config.token)) {
+    throw new Error("That doesn't look like a Meta access token. They start with \"EAA\" and are one long line of letters and numbers. Copy it again from Business Settings → System users → Generate new token.");
+  }
+  conns()[id] = c;
   if (Array.isArray(bots)) c.bots = bots;
   if (enabled !== undefined) c.enabled = Boolean(enabled);
   else c.enabled = svc.fields.filter((f) => !f.label.includes('optional')).every((f) => c.config[f.key]);
   c.status = null;
   save();
   return listConnections().find((x) => x.id === id);
+}
+
+/** Tokens are often pasted with spaces, line breaks, quotes, "Bearer " or "access_token=". */
+function cleanToken(v) {
+  return String(v)
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/^(bearer\s+|access_token=)/i, '')
+    .replace(/\s+/g, '');
 }
 
 export function removeConnection(id) {
@@ -143,7 +157,12 @@ export async function testConnection(id) {
       const call = async (url, headers = {}) => {
         const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body?.error?.message || body?.message || `HTTP ${res.status}`);
+        if (!res.ok) {
+          const msg = body?.error?.message || body?.message || `HTTP ${res.status}`;
+          if (/cannot parse access token/i.test(msg)) throw new Error(`${msg}. The saved token is not a valid token — paste it again (one line, starting with EAA) and click Save & test.`);
+          if (body?.error?.code === 190) throw new Error(`${msg}. The token has expired or was revoked — generate a new one.`);
+          throw new Error(msg);
+        }
         return body;
       };
       if (id === 'github') {
