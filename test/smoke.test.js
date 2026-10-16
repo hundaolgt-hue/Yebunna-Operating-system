@@ -74,6 +74,20 @@ test('meta reports the demo engine and the team', async () => {
   assert.ok(body.agents.length >= 8);
 });
 
+test('Higgsfield connection belongs to the Creative Director', async () => {
+  const meta = (await api('GET', '/api/meta')).body;
+  assert.ok(meta.agents.some((a) => a.id === 'creative' && a.role === 'Creative Director'));
+  const hf = (await api('GET', '/api/connections')).body.find((c) => c.id === 'higgsfield');
+  assert.ok(hf, 'listed on the Connections page');
+  assert.deepEqual(hf.bots, ['creative']);
+  const saved = (await api('PUT', '/api/connections/higgsfield', { config: {}, bots: ['creative'] })).body;
+  assert.equal(saved.enabled, true, 'no token needed to turn it on');
+  const st = (await api('POST', '/api/connections/higgsfield/test')).body;
+  assert.equal(st.ok, false, 'demo mode cannot check the Claude Code login');
+  assert.match(st.error, /Claude Code/);
+  assert.equal((await api('DELETE', '/api/connections/higgsfield')).status, 200);
+});
+
 test('the UI is served', async () => {
   const res = await fetch(BASE + '/');
   assert.equal(res.status, 200);

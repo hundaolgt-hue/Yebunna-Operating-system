@@ -48,6 +48,7 @@ export const PACKS = [
       product: ['product-marketing', 'onboarding', 'signup', 'paywalls', 'ab-testing', 'cro', 'churn-prevention'],
       support: ['onboarding', 'churn-prevention', 'emails', 'sms', 'community-marketing'],
       design: ['cro', 'popups', 'image', 'video', 'ad-creative', 'site-architecture', 'signup'],
+      creative: ['image', 'video', 'ad-creative'],
       engineer: ['schema', 'programmatic-seo', 'free-tools', 'analytics', 'site-architecture', 'ai-seo', 'seo-audit'],
       ceo: ['marketing-plan', 'marketing-council', 'launch'],
     }),
@@ -60,6 +61,7 @@ export const PACKS = [
     owners: by({
       marketing: '*',
       design: ['graphic-designer', 'youtube-thumbnail', 'gemini-carousel', 'gemini-infographic'],
+      creative: ['graphic-designer', 'youtube-thumbnail', 'gemini-carousel'],
       research: ['niche-research', 'analytics-dashboard', 'post-scorer'],
     }),
   },

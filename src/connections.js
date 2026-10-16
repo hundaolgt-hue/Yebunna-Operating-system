@@ -1,5 +1,5 @@
 // Connections: give bots access to the founder's accounts — GitHub, Vercel, Meta
-// (Facebook & Instagram) and Google Drive. Each connection has its own credentials
+// (Facebook & Instagram), Higgsfield and Google Drive. Each connection has its own credentials
 // (kept only on this PC, never sent to the browser UI) and a list of bots allowed to
 // use it. At run time a bot gets the matching tools, environment variables, folders
 // and instructions — and nothing for connections it isn't allowed to use.
@@ -54,6 +54,21 @@ export const SERVICES = {
     ],
     link: 'https://business.facebook.com/settings/system-users',
     uses: 'Read ad performance and insights, prepare campaigns and ads (created PAUSED), and draft or publish Page/Instagram posts only when a task says so.',
+  },
+  higgsfield: {
+    label: 'Higgsfield (AI images & video)',
+    icon: '🎬',
+    bots: ['creative'],
+    // No token: Higgsfield's MCP server signs in with OAuth. Claude Code keeps that login
+    // and reuses it for bot runs, because they use the same server name and URL.
+    fields: [],
+    steps: [
+      'Open a terminal and run:  claude mcp add --transport http --scope user higgsfield https://mcp.higgsfield.ai/mcp',
+      'Run  claude , type  /mcp , pick "higgsfield" and choose Authenticate. A browser opens: sign in to Higgsfield and allow access. Then type  /exit .',
+      'Pick which bots may use it below and click Save & test.',
+    ],
+    link: 'https://higgsfield.ai',
+    uses: 'Generate images and videos (ads, product shots, reels, thumbnails) with Higgsfield. Uses your Higgsfield credits; nothing is bought or posted unless the task says so.',
   },
   gdrive: {
     label: 'Google Drive',
@@ -111,7 +126,9 @@ export async function testConnection(id) {
   const cfg = c.config || {};
   let account;
   try {
-    if (id === 'gdrive') {
+    if (id === 'higgsfield') {
+      account = await checkHiggsfield();
+    } else if (id === 'gdrive') {
       if (!cfg.path) throw new Error('No folder set');
       const st = fs.statSync(cfg.path);
       if (!st.isDirectory()) throw new Error('That path is not a folder');
@@ -149,6 +166,20 @@ export async function testConnection(id) {
   return c.status;
 }
 
+export const HIGGSFIELD_URL = 'https://mcp.higgsfield.ai/mcp';
+
+/** Ask Claude Code whether its higgsfield MCP server is added and logged in. */
+async function checkHiggsfield() {
+  const { runCli } = await import('./llm.js');
+  const out = await runCli(['mcp', 'list'], 60_000);
+  const line = out.split(/\r?\n/).find((l) => /^higgsfield:/i.test(l.trim()));
+  if (!line) throw new Error('Claude Code has no "higgsfield" server yet — do step 1 first.');
+  if (!line.includes(HIGGSFIELD_URL)) throw new Error(`The "higgsfield" server in Claude Code points elsewhere. Remove it (claude mcp remove higgsfield -s user) and do step 1 again.`);
+  if (/✓|connected/i.test(line) && !/fail|auth/i.test(line)) return 'logged in via Claude Code';
+  if (/auth/i.test(line)) throw new Error('Not logged in yet — do step 2 (/mcp → higgsfield → Authenticate).');
+  throw new Error(`Claude Code can't reach Higgsfield: ${line.split(' - ').pop().trim()}`);
+}
+
 const allowed = (id, agentId) => {
   const c = conns()[id];
   if (!c?.enabled) return false;
@@ -156,9 +187,16 @@ const allowed = (id, agentId) => {
   return bots.includes('*') || bots.includes(agentId);
 };
 
+/** Short names of the services a bot may use (for the CEO when it assigns work). */
+export function connectedServices(agentId) {
+  return Object.keys(SERVICES)
+    .filter((id) => allowed(id, agentId))
+    .map((id) => SERVICES[id].label.replace(/\s*\(.*\)$/, ''));
+}
+
 /** Extra tools a bot gets from its connections. */
 export function connectionTools(agentId) {
-  return allowed('github', agentId) ? ['mcp__github'] : [];
+  return [...(allowed('github', agentId) ? ['mcp__github'] : []), ...(allowed('higgsfield', agentId) ? ['mcp__higgsfield'] : [])];
 }
 
 /** MCP server definitions for connection tools (secrets come from env, never written to disk). */
@@ -167,6 +205,8 @@ export function connectionMcpServers(tools) {
   if (tools.includes('mcp__github')) {
     servers.github = { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer ${YEBUNNA_GITHUB_TOKEN}' } };
   }
+  // Same name and URL as the founder's `claude mcp add`, so the stored Higgsfield login is reused.
+  if (tools.includes('mcp__higgsfield')) servers.higgsfield = { type: 'http', url: HIGGSFIELD_URL };
   return servers;
 }
 
@@ -205,6 +245,9 @@ export function connectionPrompt(agentId) {
   }
   if (allowed('meta', agentId)) {
     parts.push(`- Meta (Facebook & Instagram): call the Graph / Marketing API at https://graph.facebook.com (use a current API version) from Python or curl in the terminal. The token is in META_ACCESS_TOKEN (never print it or save it to a file); the ad account is META_AD_ACCOUNT_ID${conns().meta.config?.pageId ? ', the Page is META_PAGE_ID' : ''}${conns().meta.config?.igUserId ? ', the Instagram account is META_IG_USER_ID' : ''}. Reading insights is always fine. Create campaigns, ad sets and ads with status PAUSED. Never activate anything that spends money, change budgets or bids, publish posts, or reply to people unless the task explicitly says so.`);
+  }
+  if (allowed('higgsfield', agentId)) {
+    parts.push(`- Higgsfield: use the Higgsfield MCP tools (mcp__higgsfield__*) to generate images and videos. Every generation spends the founder's Higgsfield credits: check the balance first, prefer a cheaper model or a still image when it does the job, generate only the variants the task needs, and stop and report if the credits would not cover the work. Never buy credits, change plans or subscriptions, publish to TikTok or other platforms, or enter contests unless the task explicitly says so. Download every finished asset into the mission's workspace folder and list its file path and Higgsfield URL in your deliverable.`);
   }
   const drive = conns().gdrive?.config?.path;
   if (allowed('gdrive', agentId) && drive) {

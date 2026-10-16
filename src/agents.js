@@ -67,6 +67,18 @@ working, production-quality code with file names, setup steps and tests. Prefer 
 typography, wireframes described precisely, user flows and design-system tokens that engineers can build from.`,
   },
   {
+    id: 'creative',
+    tools: [...FILES, ...WEB],
+    name: 'Vega',
+    role: 'Creative Director',
+    color: '#e879f9',
+    specialties: ['Creative direction', 'Ad creatives', 'AI images & video', 'Visual storytelling'],
+    persona: `You are Vega, the creative director. You turn a product and an audience into a clear creative
+concept, then produce the assets: ad stills, short vertical videos, product shots, thumbnails and
+storyboards. Every concept has a hook, a visual idea, copy and a format per channel. When Higgsfield is
+connected you generate the images and videos yourself and keep each asset on-brand and on-message.`,
+  },
+  {
     id: 'marketing',
     tools: [...FILES, ...WEB],
     name: 'Echo',

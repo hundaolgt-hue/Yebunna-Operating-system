@@ -50,6 +50,20 @@ const [BIN, BIN_ARGS, cliVersion] = (() => {
 })();
 const demoMode = !cliVersion;
 
+/** Run a Claude Code CLI command (e.g. `mcp list`) and return its output. */
+export function runCli(args, timeoutMs = 30_000) {
+  if (!BIN) return Promise.reject(new Error('Claude Code was not found on this computer (the app is in demo mode).'));
+  return new Promise((resolve, reject) => {
+    const child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: childEnv, windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    child.on('error', (e) => (clearTimeout(timer), reject(e)));
+    child.on('close', () => (clearTimeout(timer), resolve(out)));
+  });
+}
+
 /** Why Claude Code could not be started (empty when it was found). */
 export function detectionReport() {
   return tried;

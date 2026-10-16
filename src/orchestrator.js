@@ -16,6 +16,7 @@ import { state, save, newId, now, slugify, WORKSPACE } from './store.js';
 import { bus } from './bus.js';
 import { logActivity, toolTracker } from './activity.js';
 import { demoPlan, demoOutput, demoReview, demoSummary } from './demo.js';
+import { connectedServices } from './connections.js';
 
 export { bus };
 
@@ -284,7 +285,10 @@ async function plan(m, instruction) {
     .map((t) => `- [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}`)
     .join('\n');
   const team = specialists()
-    .map((a) => `- "${a.id}" = ${a.name}, ${a.role}: ${a.specialties.join(', ')}`)
+    .map((a) => {
+      const linked = connectedServices(a.id);
+      return `- "${a.id}" = ${a.name}, ${a.role}: ${a.specialties.join(', ')}${linked.length ? ` · can use: ${linked.join(', ')}` : ''}`;
+    })
     .join('\n');
   const prompt = `Founder's goal: ${m.goal}
 Current time: ${fmt(now())}
