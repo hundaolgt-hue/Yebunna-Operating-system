@@ -31,6 +31,8 @@ export function renderSettings() {
       <p class="side-text">Bots run on your Claude plan, so their work counts toward the same limits as your own chats. Every mission is many separate runs (plan, each task, each review, memory notes, the report). This shows where your usage goes.</p>
       <label class="setting"><span><b>Usage mode</b><small>${esc(MODES[mode][1])}</small></span>
         <select class="select-sm" data-usage-mode>${Object.entries(MODES).map(([v, [l]]) => `<option value="${v}" ${mode === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="setting"><span><b>Opus for large tasks</b><small>Large tasks (code, spreadsheet models, deep research, long browser work) always run on Opus at full effort, whatever the usage mode — e.g. Economy for everything else, Opus for the heavy work. Pick “Large” when you assign a task yourself to send it to Opus.</small></span>
+        <label class="switch"><input type="checkbox" data-set="opusForLarge" ${st.opusForLarge ? 'checked' : ''}/><span></span></label></label>
       <p class="faint small">The CEO sizes every task small, medium or large. The deadline only sets the order work is done in; it never makes a bot work longer or use more.</p>
       ${usageTable()}
     </section>

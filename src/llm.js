@@ -226,7 +226,9 @@ export const usageMode = () => state.settings.usageMode || (state.settings.econo
 
 export function pick(kind, model, effort, maxTurns, size = 'medium') {
   const profile = PROFILES[usageMode()];
-  if (!profile) return { model: model || MODEL, effort, maxTurns };
+  if (!profile) return { model: model || (kind === 'task' && size === 'large' && state.settings.opusForLarge ? 'opus' : MODEL), effort, maxTurns };
+  // "Opus for large tasks": heavy work gets Opus at full effort whatever the mode.
+  if (kind === 'task' && size === 'large' && state.settings.opusForLarge) return { model: model || 'opus', effort, maxTurns };
   const p = kind === 'task' ? profile.task[size] || profile.task.medium : profile[kind];
   if (!p) return { model: model || MODEL, effort, maxTurns };
   const [m, e, steps] = p;

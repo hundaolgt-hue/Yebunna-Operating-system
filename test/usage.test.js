@@ -30,6 +30,18 @@ test('quality mode changes nothing; economy never uses the big model', () => {
   for (const size of ['small', 'medium', 'large']) assert.ok(pick('task', undefined, 'high', 100, size).model, size);
 });
 
+test('economy with "Opus for large tasks" sends only large tasks to Opus', () => {
+  state.settings.usageMode = 'economy';
+  state.settings.opusForLarge = true;
+  assert.deepEqual(pick('task', undefined, 'high', 100, 'large'), { model: 'opus', effort: 'high', maxTurns: 100 });
+  assert.equal(pick('task', undefined, 'high', 100, 'medium').model, 'sonnet');
+  assert.equal(pick('task', undefined, 'high', 100, 'small').model, 'haiku');
+  assert.equal(pick('plan', undefined, 'high', 100).model, 'sonnet');
+  state.settings.usageMode = 'quality';
+  assert.equal(pick('task', undefined, 'high', 100, 'large').model, 'opus');
+  state.settings.opusForLarge = false;
+});
+
 test('old installs with the economy switch on stay in economy', () => {
   delete state.settings.usageMode;
   state.settings.economy = true;
