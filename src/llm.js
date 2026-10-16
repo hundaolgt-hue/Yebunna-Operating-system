@@ -193,19 +193,53 @@ export class OutOfStepsError extends Error {
  * agentId: which bot is running — picks its own browser profile for computer use.
  * demo:    function returning the scripted answer used in offline demo mode.
  */
-// Economy mode: lighter model and effort for each kind of work.
-const LIGHT_KINDS = new Set(['review', 'meeting', 'memory', 'skill']);
-function pick(kind, model, effort, maxTurns) {
-  if (!state.settings.economy) return { model: model || MODEL, effort, maxTurns };
+// Usage modes: which model, effort and step budget each kind of work gets.
+//   quality  — everything on your Claude Code default model (usually the biggest).
+//   balanced — the big model only for planning and large tasks; Sonnet for normal work,
+//              Haiku for yes/no reviews and notes. Small tasks get a small step budget.
+//   economy  — no big model at all.
+// [model, effort, steps]; null model = your default; steps scale up for computer use.
+const PROFILES = {
+  balanced: {
+    task: { small: ['sonnet', 'low', 40], medium: ['sonnet', 'medium', 80], large: [null, 'high', 100] },
+    plan: [null, 'high'],
+    report: ['sonnet', 'medium'],
+    chat: ['sonnet', 'medium'],
+    meeting: ['sonnet', 'low'],
+    skill: ['sonnet', 'medium'],
+    review: ['haiku', 'low'],
+    memory: ['haiku', 'low'],
+  },
+  economy: {
+    task: { small: ['haiku', 'low', 30], medium: ['sonnet', 'low', 50], large: ['sonnet', 'medium', 60] },
+    plan: ['sonnet', 'medium'],
+    report: ['haiku', 'low'],
+    chat: ['sonnet', 'low'],
+    meeting: ['haiku', 'low'],
+    skill: ['sonnet', 'low'],
+    review: ['haiku', 'low'],
+    memory: ['haiku', 'low'],
+  },
+};
+const EFFORT = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const usageMode = () => state.settings.usageMode || (state.settings.economy ? 'economy' : 'balanced');
+
+export function pick(kind, model, effort, maxTurns, size = 'medium') {
+  const profile = PROFILES[usageMode()];
+  if (!profile) return { model: model || MODEL, effort, maxTurns };
+  const p = kind === 'task' ? profile.task[size] || profile.task.medium : profile[kind];
+  if (!p) return { model: model || MODEL, effort, maxTurns };
+  const [m, e, steps] = p;
   return {
-    model: model || (LIGHT_KINDS.has(kind) ? 'haiku' : 'sonnet'),
-    effort: ['high', 'xhigh', 'max'].includes(effort) ? 'medium' : effort,
-    maxTurns: Math.min(maxTurns, 60),
+    model: model || m || MODEL,
+    // Never raise effort above what the caller asked for.
+    effort: EFFORT[Math.min(EFFORT.indexOf(effort), EFFORT.indexOf(e))] || e,
+    maxTurns: steps ? Math.round((steps * maxTurns) / 100) : maxTurns,
   };
 }
 
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', signal, demo }) {
-  ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns));
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo }) {
+  ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size));
   if (demoMode) {
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;
@@ -305,7 +339,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
 
   const code = await exited;
-  if (result) recordUsage({ agentId, kind, usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns });
+  if (result) recordUsage({ agentId, kind, model: mainModel(result.modelUsage) || model || MODEL || 'default', usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns });
   if (signal?.aborted) throw new Error('aborted');
   if (timedOut) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`);
   if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);
@@ -325,6 +359,11 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
  * Run a completion to the end, forwarding stream events. Returns the bot's final
  * answer — the text of its last step, not the "working out loud" before tool calls.
  */
+/** The model that did most of a run's writing (Claude Code may also use a small one for housekeeping). */
+function mainModel(usage = {}) {
+  return Object.entries(usage).sort((a, b) => (b[1].outputTokens || 0) - (a[1].outputTokens || 0))[0]?.[0];
+}
+
 export async function complete(opts, onEvent) {
   let text = '';
   for await (const ev of streamChat(opts)) {

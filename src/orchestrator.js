@@ -259,6 +259,7 @@ function addTasks(m, item, specs) {
       brief: String(s.brief || ''),
       deliverable: String(s.deliverable || ''),
       skillId: s.skillId || null,
+      size: ['small', 'medium', 'large'].includes(s.size) ? s.size : 'medium',
       deadline: new Date(due).toISOString(),
       dependsOn: (s.depends_on || []).map((k) => keyToId[k]).filter(Boolean),
       status: 'queued',
@@ -303,13 +304,17 @@ Your specialists (use the quoted id in "agent"):
 ${team}
 
 Give each task a realistic deadline in hours from now that fits inside the mission deadline, leaving time
-for dependencies. Keep it to ${instruction ? '1–3' : '4–8'} focused tasks. Use depends_on (task keys) when a
+for dependencies. Give each task a size — it decides how much of the founder's Claude usage it may spend:
+"small" = a quick, short piece (a few posts, a list, a short email, a check, a summary of given input);
+"medium" = a normal deliverable (a plan, a document, a page of copy, light research);
+"large" = heavy work only (code or a multi-file build, a spreadsheet model, deep multi-source research,
+long browser work). Most tasks are small or medium; use large only when the task really needs it. Keep it to ${instruction ? '1–3' : '4–8'} focused tasks. Use depends_on (task keys) when a
 task needs another's output. Each brief must say exactly what to produce and which files to save.
 
 Reply with ONLY a JSON object, no other text:
 {"summary": "<2–4 sentence message to the founder explaining who does what>",
  "tasks": [{"key": "t1", "agent": "<specialist id>", "title": "<short imperative>", "brief": "<what to do and why>",
-            "deliverable": "<the concrete artifact to hand back>", "due_in_hours": <number>, "depends_on": ["<key>"]}]}`;
+            "deliverable": "<the concrete artifact to hand back>", "due_in_hours": <number>, "size": "small" | "medium" | "large", "depends_on": ["<key>"]}]}`;
 
   let parsed;
   for (let attempt = 1; ; attempt++) {
@@ -467,6 +472,7 @@ async function runTask(m, t) {
         tools: toolsFor(agent),
         agentId: agent.id,
         kind: 'task',
+        size: t.size,
         maxTurns,
         signal: signal(m),
         demo: () => demoOutput(t.agentId, t, m.goal),

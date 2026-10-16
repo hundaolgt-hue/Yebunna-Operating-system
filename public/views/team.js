@@ -158,6 +158,7 @@ export function assignDialog(agentId) {
       <label>Instructions<textarea name="instructions" rows="4" placeholder="Context, constraints, what good looks like"></textarea></label>
       <div class="grid2">
         <label>Deadline<select name="deadlineHours"><option value="0.5">30 minutes</option><option value="1">1 hour</option><option value="4" selected>4 hours</option><option value="24">1 day</option><option value="72">3 days</option><option value="168">1 week</option></select></label>
+        <label>Size <small class="faint">— sets how much of your Claude usage it may use</small><select name="size"><option value="small">Small — quick piece (posts, a list, an email)</option><option value="medium" selected>Medium — a normal deliverable</option><option value="large">Large — code, spreadsheet model, deep research</option></select></label>
         <label>Use a skill<select name="skillId"><option value="">— none —</option>${skills.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
       </div>
       <div class="row-btns end"><button class="btn" type="submit">Assign</button></div>

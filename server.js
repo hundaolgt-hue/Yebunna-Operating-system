@@ -151,6 +151,10 @@ const routes = {
     const body = await readBody(req);
     for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless', 'economy']) if (k in body) state.settings[k] = Boolean(body[k]);
     if (['chrome', 'msedge', 'firefox'].includes(body.browser)) state.settings.browser = body.browser;
+    if (['quality', 'balanced', 'economy'].includes(body.usageMode)) {
+      state.settings.usageMode = body.usageMode;
+      state.settings.economy = body.usageMode === 'economy';
+    }
     save();
     bus.emit('event', { type: 'settings', settings: state.settings });
     send(res, 200, state.settings);
@@ -274,7 +278,7 @@ const routes = {
   'POST /api/agents/:id/assign': async (req, res, { id }) => {
     const agent = getAgent(id);
     need(agent && id !== 'ceo', 404, 'Pick a bot to assign to (the CEO delegates missions instead).');
-    const { title, instructions, deadlineHours = 4, skillId } = await readBody(req);
+    const { title, instructions, deadlineHours = 4, skillId, size } = await readBody(req);
     need(title?.trim(), 400, 'title is required');
     const hours = Math.max(0.1, Number(deadlineHours) || 4);
     send(
@@ -283,7 +287,7 @@ const routes = {
       createMissionWithTasks({
         goal: title.trim(),
         deadline: new Date(Date.now() + hours * 36e5).toISOString(),
-        specs: [{ agent: id, title: title.trim(), brief: instructions || title, deliverable: 'The finished work', due_in_hours: hours, skillId }],
+        specs: [{ agent: id, title: title.trim(), brief: instructions || title, deliverable: 'The finished work', due_in_hours: hours, skillId, size }],
         intro: `Assigned directly to **${agent.name}** — due in ${hours}h.`,
       }),
     );
