@@ -1,6 +1,7 @@
 // The company roster: built-in agents plus any bots created in the UI. Each has a
 // persona, specialties, a toolset, its own memory and its own skills.
 import { state, save, newId, now } from './store.js';
+import { connectionTools, connectionPrompt } from './connections.js';
 
 const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products
 (SaaS tools, templates, courses, ebooks, apps, Notion kits, design assets, communities).
@@ -181,6 +182,7 @@ export function toolsFor(agent) {
     ...agent.tools,
     ...(agent.computer ? [BROWSER_TOOL] : []),
     ...(state.settings.terminal ? ['Bash'] : []),
+    ...connectionTools(agent.id),
   ];
 }
 
@@ -301,7 +303,7 @@ ${memory.length ? `\nYour memory (preferences and summaries of past work — ver
 to open its SKILL.md (and any files it points to) and follow it. Skills marked with ⚙ may need the terminal.
 ${library.map((s) => `- ${s.name}: ${String(s.summary).slice(0, 150)} → ${s.path}`).join('\n')}\n`
       : ''
-  }${
+  }${connectionPrompt(agent.id)}${
     agent.id === 'ceo'
       ? '\nAs CEO you never do specialist work yourself (no writing copy, code, designs, research or spreadsheets). Your tools are for checking the team\'s files and facts. When the founder asks for work, it gets delegated to the team.\n'
       : ''

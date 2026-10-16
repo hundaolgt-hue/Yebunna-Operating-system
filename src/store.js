@@ -23,6 +23,7 @@ export const state = {
   agentOverrides: {}, // id -> edits to a built-in agent (name, role, persona, specialties, web)
   activity: [], // live feed of what bots are doing
   skillPacks: {}, // packId -> install status
+  connections: {}, // service -> { enabled, config (secrets stay on this PC), bots, status }
   settings: {
     approvePlans: false,
     approveDeliverables: false,

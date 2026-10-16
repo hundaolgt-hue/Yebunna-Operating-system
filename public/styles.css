@@ -455,3 +455,16 @@ ul.activity li span { line-height: 1.4; }
 .lib-row .avatars .avatar { width: 20px; height: 20px; font-size: 9px; }
 .pack-list summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 10px; }
 .side .small-btn { margin-bottom: 4px; }
+
+/* connections */
+.conn .row { display: flex; align-items: center; gap: 10px; }
+.conn h3 { margin: 0; }
+.conn-icon { width: 32px; height: 32px; border-radius: 10px; background: var(--surface-2); display: grid; place-items: center; font-size: 16px; }
+.conn details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 6px 0 10px; }
+ol.steps { margin: 0 0 8px; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.ok-text { color: var(--ok); margin: 0 0 6px; }
+.bad-text { color: var(--bad); margin: 0 0 6px; }
+.usage-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.usage-table td, .usage-table th { padding: 6px 4px; border-top: 1px solid var(--border); text-align: left; }
+.usage-table th { color: var(--muted); font-weight: 500; }
+.usage-table td.num, .usage-table th.num { text-align: right; font-variant-numeric: tabular-nums; }

@@ -133,6 +133,8 @@ Speak naturally in 40–120 words, first person, no headings, no lists longer th
         },
       ],
       effort: 'low',
+      agentId,
+      kind: 'meeting',
       demo: () => demoMeetingTurn(agentId, mt, round),
     },
     (ev) => {
@@ -171,6 +173,8 @@ Reply with ONLY JSON:
       },
     ],
     effort: 'medium',
+    agentId: 'ceo',
+    kind: 'meeting',
     demo: () => demoMinutes(mt),
   });
   const parsed = extractJson(raw);

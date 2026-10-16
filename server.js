@@ -23,6 +23,7 @@ import {
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
 import { listPacks, installPack, installAll } from './src/skillpacks.js';
+import { listConnections, saveConnection, removeConnection, testConnection } from './src/connections.js';
 import { logActivity, toolTracker } from './src/activity.js';
 import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
 
@@ -130,6 +131,8 @@ const routes = {
       settings: state.settings,
       activity: (state.activity || []).slice(-200),
       packs: listPacks(),
+      connections: listConnections(),
+      usage: state.usage || null,
     }),
 
   'GET /api/events': (req, res) => {
@@ -146,7 +149,7 @@ const routes = {
   'GET /api/settings': (req, res) => send(res, 200, state.settings),
   'PUT /api/settings': async (req, res) => {
     const body = await readBody(req);
-    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless']) if (k in body) state.settings[k] = Boolean(body[k]);
+    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless', 'economy']) if (k in body) state.settings[k] = Boolean(body[k]);
     if (['chrome', 'msedge', 'firefox'].includes(body.browser)) state.settings.browser = body.browser;
     save();
     bus.emit('event', { type: 'settings', settings: state.settings });
@@ -241,6 +244,7 @@ const routes = {
         ],
         tools: ['mcp__browser'],
         agentId: id,
+        kind: 'chat',
         maxTurns: 40,
         effort: 'low',
         demo: () => `Demo mode: in live mode a browser window opens on ${url} for you to log in.`,
@@ -349,6 +353,7 @@ just answer (you may read the team's files) — no block.`
         messages: history.slice(-20).map(({ role, content }) => ({ role, content })),
         tools: isCeo ? ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'] : toolsFor(agent),
         agentId,
+        kind: 'chat',
         maxTurns: agent.computer ? 150 : 100,
         demo: () => (isCeo && !rememberMatch ? `On it — I'll get the team on this.\n\n\`\`\`delegate\n${JSON.stringify({ goal: text.trim(), deadline_hours: 24 })}\n\`\`\`` : demoChat(agentId, text)),
       })) {
@@ -447,6 +452,29 @@ just answer (you may read the team's files) — no block.`
     } catch (e) {
       throw new HttpError(400, e.message);
     }
+  },
+
+  // ---- connected accounts (GitHub, Vercel, Meta, Google Drive) ----
+  'GET /api/connections': (req, res) => send(res, 200, listConnections()),
+  'PUT /api/connections/:id': async (req, res, { id }) => {
+    try {
+      const c = saveConnection(id, await readBody(req));
+      bus.emit('event', { type: 'connections', connections: listConnections() });
+      send(res, 200, c);
+    } catch (e) {
+      throw new HttpError(400, e.message);
+    }
+  },
+  'POST /api/connections/:id/test': async (req, res, { id }) => {
+    const status = await testConnection(id);
+    bus.emit('event', { type: 'connections', connections: listConnections() });
+    if (status.ok) logActivity('ceo', `connected ${id} (${status.account})`);
+    send(res, 200, status);
+  },
+  'DELETE /api/connections/:id': (req, res, { id }) => {
+    removeConnection(id);
+    bus.emit('event', { type: 'connections', connections: listConnections() });
+    send(res, 200, { ok: true });
   },
 
   // ---- skill packs & role skills ----

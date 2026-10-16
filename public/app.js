@@ -9,6 +9,7 @@ import { renderSkills } from './views/skills.js';
 import { renderRoutines } from './views/routines.js';
 import { renderFiles } from './views/files.js';
 import { renderSettings } from './views/settings.js';
+import { renderConnections } from './views/connections.js';
 
 const parseRoute = () => {
   const [path, query = ''] = S.route.split('?');
@@ -78,6 +79,8 @@ function render(focusId) {
       return renderFiles(query.get('f'));
     case 'settings':
       return renderSettings();
+    case 'connections':
+      return renderConnections();
     default:
       return renderHome();
   }
@@ -122,7 +125,10 @@ function refresh(type) {
         if (!S.chatBusy && ['memory', 'skill', 'skill.deleted', 'agents', 'chat'].includes(type)) return renderAgent(parts[1]);
         return;
       case 'settings':
-        if (['agents', 'settings'].includes(type)) return renderSettings();
+        if (['agents', 'settings', 'usage'].includes(type)) return renderSettings();
+        return;
+      case 'connections':
+        if (['connections', 'settings', 'agents'].includes(type)) return renderConnections();
         return;
       default:
         return; // home, files: nothing live to redraw
@@ -184,6 +190,10 @@ function onEvent(e) {
       feed.innerHTML = activityList(only ? S.activity.filter((a) => a.agentId === only) : S.activity, { limit: Number(feed.dataset.limit) || 60 });
     }
     return renderSidebar();
+  } else if (e.type === 'connections') {
+    S.connections = e.connections;
+  } else if (e.type === 'usage') {
+    S.usage = e.usage;
   } else if (e.type === 'packs') {
     S.packs = e.packs;
   } else if (e.type === 'chat') {
@@ -217,6 +227,8 @@ async function loadState() {
   S.settings = st.settings;
   S.activity = st.activity || [];
   S.packs = st.packs || [];
+  S.connections = st.connections || [];
+  S.usage = st.usage || null;
   refresh('state');
 }
 

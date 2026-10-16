@@ -8,6 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { demoStream } from './demo.js';
 import { WORKSPACE, state } from './store.js';
+import { connectionMcpServers, connectionRuntime } from './connections.js';
+import { recordUsage } from './usage.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -66,11 +68,21 @@ const profilesInUse = new Set();
 const npx = (args) => (process.platform === 'win32' ? { command: 'cmd', args: ['/c', 'npx', ...args] } : { command: 'npx', args });
 
 /**
- * Write an MCP config that gives this run a browser. Each bot has its own persistent
- * profile (so sites it was logged into stay logged in); if that profile is already
- * open in another run, this run gets a throwaway in-memory profile instead.
+ * Write the MCP config for this run: a browser (computer use) and/or connected services
+ * such as GitHub. Each bot has its own persistent browser profile (so sites it was
+ * logged into stay logged in); if that profile is already open in another run, this run
+ * gets a throwaway in-memory profile instead. Secrets are referenced as ${ENV} and never
+ * written to the file.
  */
-function browserConfig(agentId = 'shared') {
+function mcpConfig(agentId = 'shared', tools = []) {
+  const servers = connectionMcpServers(tools);
+  if (!tools.includes('mcp__browser')) {
+    if (!Object.keys(servers).length) return null;
+    fs.mkdirSync(BROWSER_DIR, { recursive: true });
+    const file = path.join(BROWSER_DIR, `mcp-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`);
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }));
+    return { file, release: () => fs.rm(file, { force: true }, () => {}) };
+  }
   const profile = path.join(BROWSER_DIR, 'profiles', agentId);
   const exclusive = !profilesInUse.has(profile);
   const args = ['-y', BROWSER_PKG, '--browser', state.settings.browser || 'chrome', '--output-dir', path.join(BROWSER_DIR, 'output')];
@@ -86,7 +98,7 @@ function browserConfig(agentId = 'shared') {
   if (process.env.BROWSER_EXTRA_ARGS) args.push(...process.env.BROWSER_EXTRA_ARGS.split(' ').filter(Boolean));
   fs.mkdirSync(BROWSER_DIR, { recursive: true });
   const file = path.join(BROWSER_DIR, `mcp-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`);
-  fs.writeFileSync(file, JSON.stringify({ mcpServers: { browser: npx(args) } }));
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { ...servers, browser: npx(args) } }));
   return {
     file,
     release() {
@@ -167,7 +179,19 @@ export class OutOfStepsError extends Error {
  * agentId: which bot is running — picks its own browser profile for computer use.
  * demo:    function returning the scripted answer used in offline demo mode.
  */
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, signal, demo }) {
+// Economy mode: lighter model and effort for each kind of work.
+const LIGHT_KINDS = new Set(['review', 'meeting', 'memory', 'skill']);
+function pick(kind, model, effort, maxTurns) {
+  if (!state.settings.economy) return { model: model || MODEL, effort, maxTurns };
+  return {
+    model: model || (LIGHT_KINDS.has(kind) ? 'haiku' : 'sonnet'),
+    effort: ['high', 'xhigh', 'max'].includes(effort) ? 'medium' : effort,
+    maxTurns: Math.min(maxTurns, 60),
+  };
+}
+
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', signal, demo }) {
+  ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns));
   if (demoMode) {
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;
@@ -190,13 +214,16 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     '--max-turns', String(maxTurns),
   ];
   if (tools.length) args.push('--allowedTools', ...tools);
-  if (model || MODEL) args.push('--model', model || MODEL);
+  if (model) args.push('--model', model);
   let browser = null;
   let child;
   try {
-    browser = tools.includes('mcp__browser') ? browserConfig(agentId) : null;
+    browser = mcpConfig(agentId, tools);
     if (browser) args.push('--mcp-config', browser.file, '--strict-mcp-config');
-    child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    // Connected accounts: tokens go in this run's environment only; synced folders are added.
+    const conn = agentId ? connectionRuntime(agentId) : { env: {}, addDirs: [] };
+    for (const dir of conn.addDirs) args.push('--add-dir', dir);
+    child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: { ...childEnv, ...conn.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   } catch (e) {
     browser?.release();
     fs.rm(promptFile, { force: true }, () => {});
@@ -264,6 +291,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
 
   const code = await exited;
+  if (result) recordUsage({ agentId, kind, usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns });
   if (signal?.aborted) throw new Error('aborted');
   if (timedOut) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`);
   if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);

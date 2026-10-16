@@ -46,6 +46,8 @@ Agents marked 🌐 can search and read the web while they work, like Grok's real
 | **Live web search** | Nova, Echo, Ledger, and any bot you create with "web" turned on, use WebSearch and WebFetch. |
 | **Create your own bots** | **Team → Create a bot:** pick a preset or write a name, main job, description and specialties. |
 | **Direct assignments** | **Assign task** on any bot, with a deadline and an optional skill. No CEO planning step. |
+| **Connections** | **Connections** page. Each service has setup steps, a **Save & test** button, and a choice of which bots may use it. **GitHub** uses GitHub's official MCP server with a personal access token. **Vercel** uses the Vercel CLI with `VERCEL_TOKEN` (preview deploys by default). **Meta (Facebook & Instagram)** uses the Graph and Marketing API with a system-user token; ads are created PAUSED, and nothing spends money or publishes unless the task says so. **Google Drive** works through the folder that *Google Drive for desktop* syncs to your PC. Tokens stay in `data/state.json` on your PC. They are never sent to the browser or written to files, and are passed only to the runs of bots you allowed. |
+| **Usage & Economy mode** | **Settings → Usage** shows runs, tokens and an approximate API-equivalent cost per bot and per kind of work. **Economy mode** runs bot work on Sonnet and small jobs on Haiku, with lower effort. |
 | **Voice** | 🎙 dictation in every message box and 🔊 read-aloud on replies, using the browser's speech features (Chrome or Edge). |
 
 One Grok Bot feature isn't included:

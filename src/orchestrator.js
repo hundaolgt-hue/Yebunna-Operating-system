@@ -314,6 +314,7 @@ Reply with ONLY a JSON object, no other text:
       messages: [{ role: 'user', content: attempt === 1 ? prompt : `${prompt}\n\nYour previous reply was not valid JSON. Reply with the JSON object only.` }],
       effort: 'high',
       json: true,
+      kind: 'plan',
       demo: () => demoPlan(m.goal, hoursLeft(m), instruction),
     });
     try {
@@ -354,6 +355,7 @@ async function answer(m, question) {
     ],
     tools: CEO_TOOLS,
     agentId: 'ceo',
+    kind: 'chat',
     maxTurns: 30,
     demo: () => `Good question. Right now ${missionTasks(m).filter((t) => t.status === 'done').length} of ${m.taskIds.length} tasks are done. My recommendation: keep the scope tight and ship. (Demo mode — log in to Claude Code for a real answer.)`,
   });
@@ -460,6 +462,7 @@ async function runTask(m, t) {
         effort: 'high',
         tools: toolsFor(agent),
         agentId: agent.id,
+        kind: 'task',
         maxTurns,
         signal: signal(m),
         demo: () => demoOutput(t.agentId, t, m.goal),
@@ -540,6 +543,8 @@ async function memorize(t, m) {
     ],
     effort: 'low',
     model: 'haiku',
+    agentId: t.agentId,
+    kind: 'memory',
     demo: () => `Did "${t.title}" for "${m.goal}" — delivered ${t.late ? 'late' : 'on time'}.`,
   });
   remember(t.agentId, text.replace(/^[-*\s]+/, ''), `task:${t.id}`);
@@ -567,6 +572,8 @@ Reply with ONLY JSON: {"verdict": "approve" | "revise", "feedback": "<one or two
         },
       ],
       effort: 'low',
+      agentId: 'ceo',
+      kind: 'review',
       signal: signal(m),
       demo: demoReview,
     });
@@ -599,7 +606,7 @@ and file paths), deadline performance, risks/gaps, and the next 3 moves. Be conc
   for (let attempt = 1; attempt <= 2 && !text.trim(); attempt++) {
     item.text = '';
     try {
-      text = await streamInto(m, item, { system: systemPrompt(ceo()), messages: [{ role: 'user', content }], demo: () => demoSummary(m, tasks) });
+      text = await streamInto(m, item, { system: systemPrompt(ceo()), messages: [{ role: 'user', content }], agentId: 'ceo', kind: 'report', demo: () => demoSummary(m, tasks) });
     } catch (e) {
       if (m.status === 'cancelled') return;
       if (attempt === 2) {

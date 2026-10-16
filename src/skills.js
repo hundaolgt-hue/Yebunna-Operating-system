@@ -68,6 +68,8 @@ ${SKILL_FORMAT}`,
         },
       ],
       effort: 'medium',
+      agentId: t.agentId,
+      kind: 'skill',
       demo: () => demoSkill(t.title),
     });
     applyDraft(s, extractJson(raw));
@@ -126,6 +128,8 @@ ${SKILL_FORMAT}`,
       tools: ['Read'],
       maxTurns: MAX_FRAMES_FOR_MODEL + 5,
       effort: 'high',
+      agentId: agent.id,
+      kind: 'skill',
       demo: () => demoSkill(name || 'Taught workflow'),
     });
     applyDraft(s, extractJson(raw));
@@ -163,6 +167,8 @@ Reply with ONLY JSON:
       },
     ],
     effort: 'medium',
+    agentId,
+    kind: 'skill',
     demo: () =>
       JSON.stringify({
         skills: agent.specialties.slice(0, 3).map((sp) => ({ ...JSON.parse(demoSkill(sp)), name: sp })),

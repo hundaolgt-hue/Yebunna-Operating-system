@@ -26,9 +26,16 @@ export function renderSettings() {
         <label class="switch"><input type="checkbox" data-set="terminal" ${st.terminal ? 'checked' : ''}/><span></span></label></label>
     </section>
     <section class="settings">
+      <h3>Usage</h3>
+      <p class="side-text">Bots run on your Claude plan, so their work counts toward the same limits as your own chats. Every mission is many separate runs (plan, each task, each review, memory notes, the report). This shows where your usage goes.</p>
+      <label class="setting"><span><b>Economy mode</b><small>Bots use Sonnet for work and Haiku for reviews, meetings and notes, with lower thinking effort. Uses far less of your limit; quality stays good for most business tasks.</small></span>
+        <label class="switch"><input type="checkbox" data-set="economy" ${st.economy ? 'checked' : ''}/><span></span></label></label>
+      ${usageTable()}
+    </section>
+    <section class="settings">
       <h3>Engine</h3>
       <div class="kv"><span>Running on</span><b>${p.name === 'demo' ? 'Offline demo (Claude Code not found)' : `Claude via Claude Code ${esc(p.cli || '')}`}</b></div>
-      <div class="kv"><span>Model</span><b>${esc(p.model || '')}</b></div>
+      <div class="kv"><span>Model</span><b>${st.economy ? 'Economy: Sonnet + Haiku' : esc(p.model === 'default' ? 'Your Claude Code default' : p.model || '')}</b></div>
       <div class="kv"><span>Billing</span><b>${p.name === 'demo' ? '—' : 'Your Claude subscription (no API key)'}</b></div>
       <div class="kv"><span>Workspace</span><code>${esc(S.workspace)}</code></div>
       <p class="faint small">Change the model or parallelism in the <code>.env</code> file (see README) and restart.</p>
@@ -59,4 +66,28 @@ export function renderSettings() {
         .catch((e) => toast(e.message)),
     ),
   );
+}
+
+const n = (x) => (x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x || 0));
+const KIND = { task: 'Tasks', chat: 'Chats', plan: 'CEO planning', review: 'CEO reviews', report: 'Reports', meeting: 'Meetings', memory: 'Memory notes', skill: 'Skills', other: 'Other' };
+
+function usageTable() {
+  const days = S.usage?.days || {};
+  const today = days[new Date().toISOString().slice(0, 10)];
+  const week = Object.entries(days)
+    .filter(([d]) => Date.now() - Date.parse(d) < 7 * 864e5)
+    .reduce((a, [, v]) => ({ runs: a.runs + v.runs, output: a.output + v.output, cost: a.cost + (v.cost || 0) }), { runs: 0, output: 0, cost: 0 });
+  if (!today && !week.runs) return '<p class="faint small">No bot runs recorded yet.</p>';
+  const rows = (obj, label) =>
+    Object.entries(obj || {})
+      .sort((a, b) => (b[1].cost || 0) - (a[1].cost || 0) || b[1].output - a[1].output)
+      .map(([k, v]) => `<tr><td>${esc(label(k))}</td><td class="num">${v.runs}</td><td class="num">${n(v.turns)}</td><td class="num">${n(v.input + v.cached)}</td><td class="num">${n(v.output)}</td><td class="num">$${(v.cost || 0).toFixed(2)}</td></tr>`)
+      .join('');
+  const head = '<tr><th></th><th class="num">runs</th><th class="num">steps</th><th class="num">read</th><th class="num">written</th><th class="num">≈ API $</th></tr>';
+  return `<div class="kv"><span>Today</span><b>${today ? `${today.runs} runs · ${n(today.output)} tokens written · ≈ $${(today.cost || 0).toFixed(2)} API-equivalent` : '—'}</b></div>
+    <div class="kv"><span>Last 7 days</span><b>${week.runs} runs · ${n(week.output)} tokens written · ≈ $${week.cost.toFixed(2)}</b></div>
+    ${today ? `<details><summary class="faint small" style="cursor:pointer;margin-top:8px">Today by bot and by kind of work</summary>
+      <table class="usage-table">${head}${rows(today.byBot, (id) => S.agentById[id]?.name || id)}</table>
+      <table class="usage-table">${head}${rows(today.byKind, (k) => KIND[k] || k)}</table>
+      <p class="faint small">“≈ API $” is what the same work would cost on the pay-per-use API — not a charge on your plan, just a relative measure of how much limit each part uses.</p></details>` : ''}`;
 }
