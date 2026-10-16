@@ -85,6 +85,11 @@ export const SERVICES = {
   },
 };
 
+// Graph / Marketing API version. Unversioned calls fall back to the Meta app's own default,
+// which the Ads API rejects once it is retired (error #2635), so always name one.
+let metaVersion = process.env.META_API_VERSION || 'v26.0';
+const graph = (p) => `https://graph.facebook.com/${metaVersion}/${p}`;
+
 const conns = () => (state.connections ||= {});
 const get = (id) => conns()[id] || { enabled: false, config: {}, bots: SERVICES[id].bots };
 
@@ -148,13 +153,23 @@ export async function testConnection(id) {
         const u = await call(`https://api.vercel.com/v2/user`, { authorization: `Bearer ${cfg.token}` });
         account = u.user?.username || u.user?.email || 'connected';
       } else if (id === 'meta') {
-        const me = await call(`https://graph.facebook.com/me?fields=id,name&access_token=${encodeURIComponent(cfg.token)}`);
+        // If Meta says our version is deprecated, it names the latest one: switch and retry once.
+        const metaCall = (p) =>
+          call(graph(p)).catch((e) => {
+            const latest = e.message.match(/latest version:?\s*(v\d+\.\d+)/i)?.[1];
+            if (!latest || latest === metaVersion) throw e;
+            metaVersion = latest;
+            return call(graph(p));
+          });
+        const token = `access_token=${encodeURIComponent(cfg.token)}`;
+        const me = await metaCall(`me?fields=id,name&${token}`);
         account = me.name || me.id;
         if (cfg.adAccountId) {
           const acct = cfg.adAccountId.startsWith('act_') ? cfg.adAccountId : `act_${cfg.adAccountId}`;
-          const a = await call(`https://graph.facebook.com/${acct}?fields=name,account_status,currency&access_token=${encodeURIComponent(cfg.token)}`);
+          const a = await metaCall(`${acct}?fields=name,account_status,currency&${token}`);
           account += ` · ad account “${a.name}” (${a.currency})`;
         }
+        account += ` · API ${metaVersion}`;
       }
     }
     c.status = { ok: true, account, at: now() };
@@ -226,6 +241,7 @@ export function connectionRuntime(agentId) {
   }
   if (allowed('meta', agentId)) {
     env.META_ACCESS_TOKEN = cfg('meta').token;
+    env.META_API_VERSION = metaVersion;
     if (cfg('meta').adAccountId) env.META_AD_ACCOUNT_ID = cfg('meta').adAccountId.startsWith('act_') ? cfg('meta').adAccountId : `act_${cfg('meta').adAccountId}`;
     if (cfg('meta').pageId) env.META_PAGE_ID = cfg('meta').pageId;
     if (cfg('meta').igUserId) env.META_IG_USER_ID = cfg('meta').igUserId;
@@ -244,7 +260,7 @@ export function connectionPrompt(agentId) {
     parts.push(`- Vercel: use the Vercel CLI through the terminal (\`npx vercel@latest …\`). The token is already in the VERCEL_TOKEN environment variable — never pass it with --token or print it.${conns().vercel.config?.team ? ` Use --scope ${conns().vercel.config.team}.` : ''} Deploy preview deployments by default; deploy to production (--prod), change domains or environment variables only when the task explicitly says so. Report the deployment URL.`);
   }
   if (allowed('meta', agentId)) {
-    parts.push(`- Meta (Facebook & Instagram): call the Graph / Marketing API at https://graph.facebook.com (use a current API version) from Python or curl in the terminal. The token is in META_ACCESS_TOKEN (never print it or save it to a file); the ad account is META_AD_ACCOUNT_ID${conns().meta.config?.pageId ? ', the Page is META_PAGE_ID' : ''}${conns().meta.config?.igUserId ? ', the Instagram account is META_IG_USER_ID' : ''}. Reading insights is always fine. Create campaigns, ad sets and ads with status PAUSED. Never activate anything that spends money, change budgets or bids, publish posts, or reply to people unless the task explicitly says so.`);
+    parts.push(`- Meta (Facebook & Instagram): call the Graph / Marketing API from Python or curl in the terminal, always with the version in the URL: https://graph.facebook.com/${metaVersion}/… (also in the META_API_VERSION environment variable). Never call it without a version: Meta then uses an old default that the Ads API rejects (error #2635). If Meta says a newer version is required, use the one it names. The token is in META_ACCESS_TOKEN (never print it or save it to a file); the ad account is META_AD_ACCOUNT_ID${conns().meta.config?.pageId ? ', the Page is META_PAGE_ID' : ''}${conns().meta.config?.igUserId ? ', the Instagram account is META_IG_USER_ID' : ''}. Reading insights is always fine. Create campaigns, ad sets and ads with status PAUSED. Never activate anything that spends money, change budgets or bids, publish posts, or reply to people unless the task explicitly says so.`);
   }
   if (allowed('higgsfield', agentId)) {
     parts.push(`- Higgsfield: use the Higgsfield MCP tools (mcp__higgsfield__*) to generate images and videos. Every generation spends the founder's Higgsfield credits: check the balance first, prefer a cheaper model or a still image when it does the job, generate only the variants the task needs, and stop and report if the credits would not cover the work. Never buy credits, change plans or subscriptions, publish to TikTok or other platforms, or enter contests unless the task explicitly says so. Download every finished asset into the mission's workspace folder and list its file path and Higgsfield URL in your deliverable.`);

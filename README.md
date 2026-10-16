@@ -99,6 +99,7 @@ This setup is for your own use on your own machine. Anthropic doesn't allow offe
 | `RUN_TIMEOUT_MINUTES` | `45` | Longest a single bot run may take before it is stopped |
 | `DATA_DIR` | `./data` | Where missions, memory, skills and routines are saved (`state.json`) |
 | `WORKSPACE_DIR` | `./workspace` | The shared folder bots work in |
+| `META_API_VERSION` | `v26.0` | Graph / Marketing API version for the Meta connection (the test switches to a newer one if Meta asks) |
 | `SKILL_PACKS` | `1` | `0` skips downloading skill packs at startup (offline use, tests) |
 
 ## Project layout
