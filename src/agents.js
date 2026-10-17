@@ -2,6 +2,7 @@
 // persona, specialties, a toolset, its own memory and its own skills.
 import { state, save, newId, now } from './store.js';
 import { connectionTools, connectionPrompt } from './connections.js';
+import { playbookPrompt } from './playbook.js';
 
 const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products
 (SaaS tools, templates, courses, ebooks, apps, Notion kits, design assets, communities).
@@ -278,7 +279,7 @@ export function systemPrompt(agent) {
   return `${agent.persona}
 
 ${COMPANY}
-${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}${
+${playbookPrompt()}${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}${
     agent.computer
       ? `\nCOMPUTER USE: you control a real web browser through the browser_* tools (navigate, click, type, fill forms,
 select, upload, take snapshots and screenshots, manage tabs). Use it when a website has no API, to check how a

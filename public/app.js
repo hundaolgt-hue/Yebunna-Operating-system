@@ -33,7 +33,7 @@ function renderSidebar() {
       <span class="t">${esc(a.name)}</span></a>`)
     .join('');
 
-  const pendingApprovals = Object.values(S.tasks).filter((t) => t.status === 'approval').length + Object.values(S.missions).filter((m) => m.status === 'awaiting_approval').length;
+  const pendingApprovals = Object.values(S.tasks).filter((t) => t.status === 'approval' || t.status === 'founder').length + Object.values(S.missions).filter((m) => m.status === 'awaiting_approval').length;
   const liveMeetings = Object.values(S.meetings).filter((m) => m.status === 'live' || m.status === 'minutes').length;
   const badges = { board: pendingApprovals, meetings: liveMeetings };
   $$('[data-nav]').forEach((a) => {
@@ -192,6 +192,11 @@ function onEvent(e) {
     return renderSidebar();
   } else if (e.type === 'connections') {
     S.connections = e.connections;
+  } else if (e.type === 'rules') {
+    S.rules = e.rules;
+  } else if (e.type === 'limit') {
+    S.limit = e.limit;
+    renderLimit();
   } else if (e.type === 'usage') {
     S.usage = e.usage;
   } else if (e.type === 'packs') {
@@ -229,7 +234,20 @@ async function loadState() {
   S.packs = st.packs || [];
   S.connections = st.connections || [];
   S.usage = st.usage || null;
+  S.rules = st.rules || [];
+  S.limit = st.limit || null;
+  renderLimit();
   refresh('state');
+}
+
+// Paused on the Claude usage limit: say so on every page, with when it resumes.
+function renderLimit() {
+  const el = $('#limit-banner');
+  el.hidden = !S.limit;
+  if (!S.limit) return;
+  const at = new Date(S.limit.resetAt).toLocaleString();
+  el.innerHTML = `<span>⏸ <b>Paused — Claude usage limit reached.</b> Work resumes automatically ${S.limit.known ? `when it resets (${esc(at)})` : `at ${esc(at)} (checked every couple of hours)`}.</span><span class="spacer"></span><button class="btn-ghost" data-resume-now>Try now</button>`;
+  $('[data-resume-now]', el).addEventListener('click', () => api('/api/limit/resume', { method: 'POST' }).then(() => toast('Trying again…')).catch((e) => toast(e.message)));
 }
 
 // Countdown clocks.

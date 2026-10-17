@@ -65,6 +65,8 @@ export function demoPlan(goal, hoursLeft, instruction) {
 
 export function demoOutput(agentId, task, goal) {
   const a = getAgent(agentId);
+  // Demo of the blocker flow: a brief containing [[demo:blocked]] gets stuck until someone answers.
+  const stuck = String(task.brief).includes('[[demo:blocked]]') && !task.feedback ? '\n\nBLOCKED: I need to be logged in to ye-buna.com to read the sales numbers | NEED: the founder logs in with "Log in to a site"' : '';
   return `## ${task.title}
 
 **Owner:** ${a.name} (${a.role})
@@ -86,7 +88,7 @@ export function demoOutput(agentId, task, goal) {
 1. Share this with the team.
 2. Revisit after the first 50 customer conversations.
 
-> _Demo mode — install Claude Code and log in with your Claude subscription to have the team do the real work._`;
+> _Demo mode — install Claude Code and log in with your Claude subscription to have the team do the real work._${stuck}`;
 }
 
 export function demoReview() {

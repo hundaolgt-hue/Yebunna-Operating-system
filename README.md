@@ -48,6 +48,10 @@ Agents marked 🌐 can search and read the web while they work, like Grok's real
 | **Create your own bots** | **Team → Create a bot:** pick a preset or write a name, main job, description and specialties. |
 | **Direct assignments** | **Assign task** on any bot, with a deadline and an optional skill. No CEO planning step. |
 | **Connections** | **Connections** page. Each service has setup steps, a **Save & test** button, and a choice of which bots may use it. **GitHub** uses GitHub's official MCP server with a personal access token. **Vercel** uses the Vercel CLI with `VERCEL_TOKEN` (preview deploys by default). **Meta (Facebook & Instagram)** uses the Graph and Marketing API with a system-user token; ads are created PAUSED, and nothing spends money or publishes unless the task says so. **Higgsfield** uses Higgsfield's MCP server (`https://mcp.higgsfield.ai/mcp`) for AI images and video, given to Vega, the Creative Director, by default. It signs in with OAuth, so there is no token to paste: run `claude mcp add --transport http --scope user higgsfield https://mcp.higgsfield.ai/mcp` once, log in under `/mcp` in Claude Code, and bot runs reuse that login. Bots check your credits first and never buy credits or post anything unless the task says so. **Google Drive** works through the folder that *Google Drive for desktop* syncs to your PC. Tokens stay in `data/state.json` on your PC. They are never sent to the browser or written to files, and are passed only to the runs of bots you allowed. |
+| **Blockers → CEO → you** | A bot that can't get past something (missing access, a login, a decision, a tool that keeps failing) ends its work with `BLOCKED: … \| NEED: …`. Failed runs count as blockers too. The CEO then tells the bot how to get past it, hands the task to a teammate who has the access, or, only when nobody on the team can, asks you. Your question shows on the task card (**🙋 Needs you**) and on Telegram. Your answer sends the task back to work. |
+| **Telegram alerts** | **Connections → Telegram:** make a bot with @BotFather, paste its token, press Start in the bot, then click **Save & test** (your chat is found automatically). You get a message when something only you can do blocks a mission, when a plan or deliverable needs your OK, when the usage limit pauses work, and when a mission finishes. Reply to a message to answer it. `/status` shows what the team is doing, `/answer <n> <text>` answers an item from `/status`, and `/resume` retries after a limit pause. Only your own chat is accepted. |
+| **Usage-limit auto-resume** | When a run hits your Claude usage limit, everything pauses: running tasks, CEO reviews, plans, reports and meetings go back in the queue, nothing new starts, and no runs are wasted. One timer wakes the team at the reset time Claude Code reports (plus 90 seconds). If no time is reported, it tries again every 2 hours (`LIMIT_CHECK_HOURS`). A banner shows the pause, with **Try now**. It survives restarts. |
+| **Morning retrospective & playbook** | Every morning at 08:00 (a routine you can change), the bots that worked since the last retrospective meet. Each reports what went well, what went wrong and why, and proposes a rule. The CEO turns lessons into **DO** / **DON'T** rules in the **team playbook** and retires rules that stopped helping. Every bot follows the playbook in every task. If nothing happened since the last retrospective, the meeting is skipped and uses nothing. Edit the playbook on the **Meetings** page. |
 | **Usage modes** | **Settings → Usage** shows runs, tokens and an approximate API-equivalent cost per bot, per kind of work and per model. The CEO sizes every task *small*, *medium* or *large* (you pick the size when you assign directly). **Balanced** (default): your default model only plans missions and does large tasks; medium tasks, chats, meetings and reports use Sonnet; small tasks use Sonnet with low effort and a small step budget; CEO reviews and memory notes use Haiku. **Quality** runs everything on your default model. **Economy** never uses the big model. **Opus for large tasks** (a switch next to it) sends large tasks to Opus at full effort in any mode, e.g. Economy for everything else and Opus for the heavy work. Deadlines only set the order of work; they don't make a bot spend more. |
 | **Voice** | 🎙 dictation in every message box and 🔊 read-aloud on replies, using the browser's speech features (Chrome or Edge). |
 
@@ -100,6 +104,8 @@ This setup is for your own use on your own machine. Anthropic doesn't allow offe
 | `DATA_DIR` | `./data` | Where missions, memory, skills and routines are saved (`state.json`) |
 | `WORKSPACE_DIR` | `./workspace` | The shared folder bots work in |
 | `META_API_VERSION` | `v26.0` | Graph / Marketing API version for the Meta connection (the test switches to a newer one if Meta asks) |
+| `LIMIT_CHECK_HOURS` | `2` | After a usage-limit pause with no reset time, how often to try again |
+| `RETRO_TIME` | `08:00` | Time of the morning retrospective created on first start |
 | `SKILL_PACKS` | `1` | `0` skips downloading skill packs at startup (offline use, tests) |
 
 ## Project layout
@@ -110,7 +116,10 @@ src/agents.js        the team: personas, custom bots, tools, memory, system prom
 src/orchestrator.js  CEO loop: plan → approve → delegate → run → review → report, watchdog, memory
 src/meetings.js      team meetings & standups → minutes → action items
 src/skills.js        skills, save-as-skill, watch-and-learn teaching
-src/routines.js      schedules and event triggers
+src/routines.js      schedules and event triggers (incl. the morning retrospective)
+src/limits.js        usage-limit pause and automatic resume
+src/telegram.js      Telegram alerts and replies to the founder
+src/playbook.js      team rules learned in retrospectives
 src/skillpacks.js    downloads skill packs (git) and assigns them to bots
 src/activity.js      live activity feed
 src/llm.js           Claude Code bridge (headless `claude -p`, streamed)

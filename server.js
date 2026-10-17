@@ -19,7 +19,12 @@ import {
   resumeAll,
   approvePlan,
   decideTask,
+  answerTask,
 } from './src/orchestrator.js';
+import { addRule, removeRule, listRules } from './src/playbook.js';
+import { resume as resumeAfterLimit } from './src/limits.js';
+import { startRetro } from './src/meetings.js';
+import './src/telegram.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
 import { listPacks, installPack, installAll } from './src/skillpacks.js';
@@ -133,6 +138,8 @@ const routes = {
       packs: listPacks(),
       connections: listConnections(),
       usage: state.usage || null,
+      rules: listRules(),
+      limit: state.limit,
     }),
 
   'GET /api/events': (req, res) => {
@@ -193,6 +200,14 @@ const routes = {
     const { approve, feedback } = await readBody(req);
     need(t.status === 'approval', 409, 'This task is not waiting for your approval.');
     decideTask(t, { approve: Boolean(approve), feedback });
+    send(res, 200, { ok: true });
+  },
+  'POST /api/tasks/:id/answer': async (req, res, { id }) => {
+    const t = get('tasks', id, 'task');
+    const { text } = await readBody(req);
+    need(text?.trim(), 400, 'Write your answer.');
+    need(t.status === 'founder', 409, 'This task is not waiting for you.');
+    answerTask(t, text.trim());
     send(res, 200, { ok: true });
   },
   'POST /api/tasks/:id/skill': (req, res, { id }) => {
@@ -427,6 +442,32 @@ just answer (you may read the team's files) — no block.`
   },
   'DELETE /api/meetings/:id': (req, res, { id }) => {
     deleteMeeting(get('meetings', id, 'meeting'));
+    send(res, 200, { ok: true });
+  },
+
+  'POST /api/retro': (req, res) => {
+    const mt = startRetro();
+    need(mt, 409, 'Nothing new to review since the last retrospective.');
+    send(res, 201, mt);
+  },
+
+  // ---- team playbook (rules from retrospectives) ----
+  'POST /api/rules': async (req, res) => {
+    const body = await readBody(req);
+    try {
+      send(res, 201, addRule({ ...body, source: 'founder' }) || { duplicate: true });
+    } catch (e) {
+      throw new HttpError(400, e.message);
+    }
+  },
+  'DELETE /api/rules/:id': (req, res, { id }) => {
+    removeRule(id);
+    send(res, 200, { ok: true });
+  },
+
+  // ---- usage limit ----
+  'POST /api/limit/resume': (req, res) => {
+    resumeAfterLimit('founder asked');
     send(res, 200, { ok: true });
   },
 

@@ -21,6 +21,8 @@ export const S = {
   route: '',
   activity: [],
   packs: [],
+  rules: [],
+  limit: null,
 };
 
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -90,7 +92,7 @@ export function missionDue(m) {
   return left >= 0 ? `deadline in ${span(left)}` : `deadline passed ${span(left)} ago`;
 }
 
-export const STATUS_LABEL = { queued: 'Queued', in_progress: 'Working', review: 'CEO review', approval: 'Your approval', done: 'Done', failed: 'Failed' };
+export const STATUS_LABEL = { queued: 'Queued', in_progress: 'Working', review: 'CEO review', approval: 'Your approval', blocked: 'Blocked · CEO', founder: 'Needs you', done: 'Done', failed: 'Failed' };
 export const MISSION_LABEL = {
   planning: 'CEO planning',
   awaiting_approval: 'Plan needs your OK',

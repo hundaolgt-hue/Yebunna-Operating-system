@@ -1,11 +1,11 @@
 // Routines: work that runs on a schedule (every N hours, daily, weekly) or after an
 // event (a mission or task completes) — Grok Bot's schedules and triggers.
 // A routine can assign a task to one bot, run a skill, have the CEO plan a whole
-// mission, or call a team standup.
+// mission, call a team standup, or hold the morning retrospective.
 import { getAgent, specialists } from './agents.js';
 import { state, save, newId, now } from './store.js';
 import { bus, createMission, createMissionWithTasks } from './orchestrator.js';
-import { startMeeting } from './meetings.js';
+import { startMeeting, startRetro } from './meetings.js';
 import { runSkill } from './skills.js';
 import { logActivity } from './activity.js';
 
@@ -41,7 +41,7 @@ export function nextRun(schedule, from = Date.now()) {
 }
 
 function validate(r) {
-  if (!['assignment', 'skill', 'mission', 'standup'].includes(r.kind)) throw new Error('Unknown routine type');
+  if (!['assignment', 'skill', 'mission', 'standup', 'retro'].includes(r.kind)) throw new Error('Unknown routine type');
   if ((r.kind === 'assignment' || r.kind === 'skill') && (!getAgent(r.agentId) || r.agentId === 'ceo')) throw new Error('Pick a bot for this routine');
   if (r.kind === 'skill' && !state.skills[r.skillId]) throw new Error('Pick a skill');
   if ((r.kind === 'assignment' || r.kind === 'mission') && !r.instruction?.trim()) throw new Error('Write what the routine should do');
@@ -118,11 +118,15 @@ export function fireRoutine(r, reason = 'manual') {
         source,
       });
       run.ref = { type: 'meeting', id: mt.id };
+    } else if (r.kind === 'retro') {
+      const mt = startRetro({ source });
+      if (mt) run.ref = { type: 'meeting', id: mt.id };
+      else run.note = 'Nothing new to review — skipped (no usage).';
     }
   } catch (e) {
     run.error = e.message;
   }
-  logActivity(r.agentId || 'ceo', run.error ? `routine “${r.name}” failed: ${run.error}` : `ran the routine “${r.name}” (${reason})`, run.ref?.type === 'meeting' ? { type: 'meeting', id: run.ref.id } : run.ref ? { type: 'mission', id: run.ref.id } : null);
+  logActivity(r.agentId || 'ceo', run.error ? `routine “${r.name}” failed: ${run.error}` : run.note ? `routine “${r.name}”: ${run.note}` : `ran the routine “${r.name}” (${reason})`, run.ref?.type === 'meeting' ? { type: 'meeting', id: run.ref.id } : run.ref ? { type: 'mission', id: run.ref.id } : null);
   r.runs = [run, ...r.runs].slice(0, 20);
   r.lastRunAt = run.at;
   r.nextRunAt = r.enabled ? nextRun(r.schedule) : null;
@@ -148,3 +152,12 @@ bus.on('trigger', ({ event, mission, task }) => {
     fireRoutine(r, event === 'mission_completed' ? `mission done: ${m?.title}` : `task done: ${task?.title}`);
   }
 });
+
+// Every company gets a morning retrospective once; the founder can change its time or turn it off.
+if (!state.settings.retroSeeded) {
+  state.settings.retroSeeded = true;
+  if (!Object.values(state.routines).some((r) => r.kind === 'retro')) {
+    createRoutine({ name: 'Morning retrospective', kind: 'retro', schedule: { type: 'daily', time: process.env.RETRO_TIME || '08:00' } });
+  }
+  save();
+}

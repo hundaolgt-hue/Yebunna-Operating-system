@@ -31,6 +31,13 @@ function taskCard(t, focusId) {
       <div class="md ${working ? 'cursor' : ''}" data-stream="task:${t.id}:output">${t.output ? markdown(t.output) : `<span class="${working ? 'shimmer' : ''}" style="color:var(--faint)">${t.status === 'queued' ? 'Waiting for dependencies or a free slot…' : working ? `${esc(a.name)} is working…` : ''}</span>`}</div>
       ${t.error ? `<div class="review-note" style="color:var(--bad)">${esc(t.error)}</div>` : ''}
       ${t.review ? `<div class="review-note">${avatar('ceo', 'sm')} <b>${esc(S.agentById.ceo?.name)}:</b> ${esc(t.review.feedback)}</div>` : ''}
+      ${t.blocker && ['blocked', 'founder'].includes(t.status) ? `<div class="blocker-note">🧱 <b>Blocked:</b> ${esc(t.blocker.reason)}${t.blocker.need ? `<br><b>Needs:</b> ${esc(t.blocker.need)}` : ''}${t.status === 'blocked' ? `<br><span class="faint">${esc(S.agentById.ceo?.name || 'The CEO')} is working out how to unblock it…</span>` : ''}</div>` : ''}
+      ${t.status === 'founder' ? `<form class="approval" data-answer="${t.id}">
+          <div class="approval-title">🙋 Needs you</div>
+          <div class="md">${markdown(t.question || '')}</div>
+          <textarea name="text" rows="2" placeholder="Your answer, or what you did (e.g. “Logged in to Ye-Buna — go ahead”)"></textarea>
+          <div class="row-btns"><button class="btn">Send & resume</button></div>
+        </form>` : ''}
       ${t.status === 'approval' ? `<form class="approval" data-decide="${t.id}">
           <div class="approval-title">🔐 Waiting for your sign-off</div>
           <input name="feedback" placeholder="What should change? (only needed to request changes)" />
@@ -140,6 +147,16 @@ export function renderMission(id, focusId) {
       const feedback = form.elements.feedback.value.trim();
       if (!approve && !feedback) return toast('Say what should change.');
       await api(`/api/tasks/${form.dataset.decide}/decision`, { method: 'POST', body: { approve, feedback } }).catch((err) => toast(err.message));
+    }),
+  );
+  $$('[data-answer]', v).forEach((form) =>
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = form.elements.text.value.trim();
+      if (!text) return toast('Write your answer.');
+      await api(`/api/tasks/${form.dataset.answer}/answer`, { method: 'POST', body: { text } })
+        .then(() => toast('Sent — the team carries on.'))
+        .catch((err) => toast(err.message));
     }),
   );
   $$('[data-save-skill]', v).forEach((b) =>

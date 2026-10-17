@@ -70,6 +70,24 @@ export const SERVICES = {
     link: 'https://higgsfield.ai',
     uses: 'Generate images and videos (ads, product shots, reels, thumbnails) with Higgsfield. Uses your Higgsfield credits; nothing is bought or posted unless the task says so.',
   },
+  telegram: {
+    label: 'Telegram (alerts to you)',
+    icon: '✈️',
+    system: true, // used by the app itself to reach the founder, not by bots
+    bots: [],
+    fields: [
+      { key: 'token', label: 'Bot token', secret: true, placeholder: '123456789:AA…' },
+      { key: 'chatId', label: 'Your chat ID (optional — found automatically)', placeholder: 'filled in after the test' },
+    ],
+    steps: [
+      'In Telegram, open @BotFather, send /newbot, and pick a name and a username for your bot.',
+      'BotFather replies with a token like 123456789:AA… — copy it and paste it below.',
+      'Open your new bot in Telegram and press Start (or send it "hi"), so it is allowed to message you.',
+      'Click Save & test. You get a test message, and your chat ID is filled in automatically.',
+    ],
+    link: 'https://t.me/BotFather',
+    uses: 'Sends you a message when something only you can do is blocking a mission (a login, a decision, an approval), when the usage limit pauses work and when it resumes. Reply to an alert to answer it; /status shows what the team is doing.',
+  },
   gdrive: {
     label: 'Google Drive',
     icon: '🗂',
@@ -98,7 +116,7 @@ export function listConnections() {
   return Object.entries(SERVICES).map(([id, svc]) => {
     const c = get(id);
     const config = Object.fromEntries(svc.fields.map((f) => [f.key, f.secret ? (c.config?.[f.key] ? '••••••' + String(c.config[f.key]).slice(-4) : '') : c.config?.[f.key] || '']));
-    return { id, label: svc.label, icon: svc.icon, fields: svc.fields, steps: svc.steps, link: svc.link, uses: svc.uses, needsTerminal: !!svc.needsTerminal, enabled: !!c.enabled, bots: c.bots || svc.bots, config, status: c.status || null };
+    return { id, label: svc.label, icon: svc.icon, fields: svc.fields, steps: svc.steps, link: svc.link, uses: svc.uses, needsTerminal: !!svc.needsTerminal, system: !!svc.system, enabled: !!c.enabled, bots: c.bots || svc.bots, config, status: c.status || null };
   });
 }
 
@@ -112,6 +130,9 @@ export function saveConnection(id, { config = {}, bots, enabled }) {
     // Secret boxes are left empty to keep the saved value (Disconnect clears it).
     if (f.secret && (!String(v).trim() || String(v).startsWith('••••••'))) continue;
     c.config[f.key] = f.secret ? cleanToken(v) : String(v).trim();
+  }
+  if (id === 'telegram' && c.config.token && !/^\d+:[\w-]{30,}$/.test(c.config.token)) {
+    throw new Error("That doesn't look like a Telegram bot token. It looks like 123456789:AA… — copy the whole line BotFather sent you.");
   }
   if (id === 'meta' && c.config.token && !/^EA[A-Za-z0-9]{20,}$/.test(c.config.token)) {
     throw new Error("That doesn't look like a Meta access token. They start with \"EAA\" and are one long line of letters and numbers. Copy it again from Business Settings → System users → Generate new token.");
@@ -145,7 +166,10 @@ export async function testConnection(id) {
   const cfg = c.config || {};
   let account;
   try {
-    if (id === 'higgsfield') {
+    if (id === 'telegram') {
+      const { testTelegram } = await import('./telegram.js');
+      account = await testTelegram(c);
+    } else if (id === 'higgsfield') {
       account = await checkHiggsfield();
     } else if (id === 'gdrive') {
       if (!cfg.path) throw new Error('No folder set');

@@ -10,6 +10,7 @@ import { demoStream } from './demo.js';
 import { WORKSPACE, state } from './store.js';
 import { connectionMcpServers, connectionRuntime } from './connections.js';
 import { recordUsage } from './usage.js';
+import { UsageLimitError, limited, hitLimit, parseReset } from './limits.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -247,7 +248,13 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     return;
   }
 
+  // Paused on the plan's usage limit: don't spend a run finding that out again.
+  if (limited()) throw new UsageLimitError(`Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
   await acquire(signal);
+  if (limited()) {
+    releaseSlot();
+    throw new UsageLimitError('Paused until your Claude usage limit resets.', state.limit.resetAt);
+  }
   // Instructions go in a file: Windows caps a command line at ~32k characters.
   const promptFile = path.join(os.tmpdir(), `yebunna-sys-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
   fs.writeFileSync(promptFile, system);
@@ -345,13 +352,23 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   if (signal?.aborted) throw new Error('aborted');
   if (timedOut) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`);
   if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);
+  // Sometimes the limit notice comes back as the "answer" instead of an error.
+  if (!result?.is_error && /^(claude ai usage limit reached|you've hit your limit|\d+-hour limit reached)/i.test(String(result?.result || lastText).trim())) {
+    result = { ...result, is_error: true, result: result?.result || lastText };
+  }
   if (result?.is_error || (code !== 0 && !result)) {
     const why = String(result?.result || stderr.trim() || `claude exited with code ${code}`);
     if (/not logged in|please run \/login|invalid api key|authentication_error|oauth token|\/login/i.test(why)) {
       throw new Error('Claude Code is not logged in. In cmd run `claude`, type /login, choose your Claude account (Pro/Max subscription), finish in the browser, type /exit, then try again.');
     }
-    if (/usage limit|rate limit|limit reached|overloaded|429/i.test(why)) {
-      throw new Error(`Your Claude plan's usage limit was reached or Claude is busy — try again later. (${why.slice(0, 200)})`);
+    const all = `${why}\n${lastText}\n${stderr}`;
+    if (/usage limit|limit reached|hit your limit|limit will reset|resets? \d/i.test(all)) {
+      const resetAt = parseReset(all);
+      hitLimit(why, resetAt);
+      throw new UsageLimitError(`Your Claude usage limit was reached — work pauses and resumes automatically${resetAt ? ` at ${new Date(resetAt).toLocaleString()}` : ''}.`, resetAt);
+    }
+    if (/rate limit|overloaded|429|529/i.test(why)) {
+      throw new Error(`Claude is busy right now (rate limited) — try again in a few minutes. (${why.slice(0, 200)})`);
     }
     throw new Error(`Claude Code: ${why.slice(0, 400)}`);
   }

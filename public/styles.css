@@ -150,6 +150,18 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .status.review { color: var(--info); border-color: #60a5fa55; }
 .status.done { color: var(--ok); border-color: #4ade8055; }
 .status.failed { color: var(--bad); border-color: #f8717155; }
+.status.blocked { color: var(--warn); border-color: #fbbf2455; }
+.status.founder, .status.approval { color: #f0abfc; border-color: #f0abfc66; }
+.limit-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 16px 0; padding: 10px 14px; border: 1px solid #fbbf2444; background: #fbbf240d; color: #f6d27a; border-radius: 12px; font-size: 14px; }
+.limit-banner .spacer { flex: 1; }
+.blocker-note { margin-top: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid #fbbf2433; background: #fbbf240a; font-size: 14px; }
+.rules { display: grid; gap: 6px; margin: 8px 0 4px; }
+.rule { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; }
+.rule .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.rule .tag.do { color: var(--ok); border: 1px solid #4ade8055; }
+.rule .tag.dont { color: var(--bad); border: 1px solid #f8717155; }
+.rule .grow { flex: 1; }
+.rule small { display: block; color: var(--faint); }
 .due { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .due.late { color: var(--bad); }
 .due.early { color: var(--ok); }
@@ -287,8 +299,9 @@ dialog.modal::backdrop { background: #000b; backdrop-filter: blur(3px); }
 .form { display: flex; flex-direction: column; gap: 12px; }
 .form label, .field-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
 .form small, .field-label small { color: var(--faint); }
-.form input, .form select, .form textarea, .inline-form input, .approval input { background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); border-radius: 12px; padding: 9px 12px; font: inherit; font-size: 14px; outline: 0; color-scheme: dark; }
-.form input:focus, .form select:focus, .form textarea:focus, .inline-form input:focus, .approval input:focus { border-color: #555; }
+.form input, .form select, .form textarea, .inline-form input, .approval input, .approval textarea, [data-add-rule] input { background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); border-radius: 12px; padding: 9px 12px; font: inherit; font-size: 14px; outline: 0; color-scheme: dark; }
+.form input:focus, .form select:focus, .form textarea:focus, .inline-form input:focus, .approval input:focus, .approval textarea:focus, [data-add-rule] input:focus { border-color: #555; }
+.approval textarea { width: 100%; resize: vertical; }
 .form textarea { resize: vertical; line-height: 1.5; }
 .form textarea.mono { font-family: var(--mono); font-size: 13px; }
 .form label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }

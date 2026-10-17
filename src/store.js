@@ -24,6 +24,11 @@ export const state = {
   activity: [], // live feed of what bots are doing
   skillPacks: {}, // packId -> install status
   connections: {}, // service -> { enabled, config (secrets stay on this PC), bots, status }
+  usage: {}, // usage meter by day
+  rules: [], // team playbook learned in retrospectives
+  limit: null, // { since, resetAt, known } while paused on the Claude usage limit
+  telegram: { sent: [], offset: 0 }, // alerts sent (for matching replies) and the polling offset
+  lastRetroAt: null,
   settings: {
     approvePlans: false,
     approveDeliverables: false,
