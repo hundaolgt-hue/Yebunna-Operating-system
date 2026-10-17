@@ -61,3 +61,22 @@ test('with no reset time given, it tries again after the check interval (2h)', (
 });
 
 test.after(() => fs.rmSync(TMP, { recursive: true, force: true }));
+
+test('the founder always gets a slot: chats jump the queue and use a reserved slot', async () => {
+  const { _slots, runStats } = await import('../src/llm.js');
+  const max = runStats().max;
+  for (let i = 0; i < max; i++) await _slots.acquire(null, false); // the team fills every normal slot
+  let teamGot = false;
+  const team = _slots.acquire(null, false).then(() => (teamGot = true));
+  await _slots.acquire(null, true); // the founder's chat starts immediately
+  assert.equal(runStats().running, max + 1);
+  assert.equal(teamGot, false, 'the team does not get the reserved slot');
+  _slots.release(); // the chat ends
+  await sleep(10);
+  assert.equal(teamGot, false, 'still no normal slot free');
+  _slots.release(); // a task ends → the waiting task starts
+  await team;
+  assert.equal(runStats().running, max);
+  for (let i = 0; i < max; i++) _slots.release();
+  assert.equal(runStats().running, 0);
+});

@@ -45,6 +45,7 @@ export function renderSettings() {
       <h3>Engine</h3>
       <div class="kv"><span>Running on</span><b>${p.name === 'demo' ? 'Offline demo (Claude Code not found)' : `Claude via Claude Code ${esc(p.cli || '')}`}</b></div>
       <div class="kv"><span>Model</span><b>${esc(MODES[mode][0])}${mode !== 'economy' ? ` · big model: ${esc(p.model === 'default' ? 'your Claude Code default' : p.model || '')}` : ''}</b></div>
+      <div class="kv"><span>Claude runs right now</span><b data-runs>…</b></div>
       <div class="kv"><span>Billing</span><b>${p.name === 'demo' ? '—' : 'Your Claude subscription (no API key)'}</b></div>
       <div class="kv"><span>Workspace</span><code>${esc(S.workspace)}</code></div>
       <p class="faint small">Change the model or parallelism in the <code>.env</code> file (see README) and restart.</p>
@@ -56,6 +57,12 @@ export function renderSettings() {
     </section>
   </div>`;
   loadStorage();
+  api('/api/health')
+    .then((h) => {
+      const el = document.querySelector('[data-runs]');
+      if (el) el.textContent = `${h.runs.running} busy of ${h.runs.max} (+1 kept free for your chats) · ${h.runs.waiting} waiting${h.telegram.lastError ? ` · Telegram: ${h.telegram.lastError}` : ''}`;
+    })
+    .catch(() => {});
   const put = (body) =>
     api('/api/settings', { method: 'PUT', body })
       .then((s) => ((S.settings = s), toast('Saved.')))
