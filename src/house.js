@@ -25,6 +25,9 @@ restrained, confident, expensive. If a frame would not run in a global launch ca
   says they have a licence.
 - Aesthetics: savee.com (curated moodboards: editorial composition, refined colour and typography,
   premium photography).
+- The founder's own samples come first: if the task points to files in references/ (or the founder sent
+  samples), study every one of them (images with Read; videos frame by frame, see your instructions) and
+  match their style, pacing, colour and type closely, while making the content original.
 - Before a new campaign, look at a few references (web search, WebFetch or the browser, if you have
   them; some of these sites block bots, so fall back on the principles above). Write 3 lines on what
   you take from them (motion, composition, colour), then create original work.
@@ -115,7 +118,7 @@ correctly. List the page URL, the files, and the checkout link used.`;
 export const HOUSE_SKILLS = [
   {
     id: 'house_creative_standards',
-    version: 2,
+    version: 3,
     name: 'House creative standards (premium Facebook ads)',
     summary: 'Fortune 500 launch-ad quality; motion and aesthetic references; Facebook ad sizes; vertical video only; Amharic on-screen text; sound effects and classical music only, no voiceover.',
     body: CREATIVE,

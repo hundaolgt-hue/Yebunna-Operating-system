@@ -28,6 +28,7 @@ function companyState(waiting) {
     .map((m) => `- [${m.id}] ${m.title} — finished ${m.completedAt}, report in ${m.folder}/00-mission-report.md`);
   return `Active missions:\n${active.join('\n') || '- none'}
 Recently finished:\n${recent.join('\n') || '- none'}
+Files the founder sent in the last 24 h (in the workspace):\n${(state.telegram?.uploads || []).filter((u) => Date.now() - Date.parse(u.at) < 864e5).map((u) => `- ${u.path}`).join('\n') || '- none'}
 Waiting on the founder:\n${waiting.map((w, i) => `${i + 1}. ${w.label}`).join('\n') || '- nothing'}${state.limit ? `\nThe team is PAUSED on the Claude usage limit until ${state.limit.resetAt}.` : ''}`;
 }
 
@@ -36,12 +37,13 @@ Waiting on the founder:\n${waiting.map((w, i) => `${i + 1}. ${w.label}`).join('\
  * after carrying out any actions it decided on.
  * focus: optional { missionId } when the founder replied to a message about a mission.
  */
-export async function ceoChat(text, { via = 'telegram', focus = null } = {}) {
+export async function ceoChat(text, { via = 'telegram', focus = null, attachments = [] } = {}) {
   const { waitingItems, answerItem } = await import('./telegram.js');
   const { createMission, sendToMission } = await import('./orchestrator.js');
   const { addRule } = await import('./playbook.js');
   const ceo = getAgent('ceo');
   const history = (state.chats.ceo ||= []);
+  if (attachments.length) text = `${text}\n\n(Attached — saved in the workspace: ${attachments.join(', ')})`;
   history.push({ role: 'user', content: text, via, at: now() });
   save();
   bus.emit('event', { type: 'chat', agentId: 'ceo' });
@@ -77,7 +79,8 @@ YOU CAN ACT. To do something, end your message with exactly one block:
   {"type": "remember", "text": "<a preference or fact to remember>"}
 ]
 \`\`\`
-- New work → "mission" (you never do the work yourself). Instructions or comments about a running or
+- New work → "mission" (you never do the work yourself). If the founder sent files for it (samples,
+  examples, a style to follow, product shots), name their exact paths in the goal and say how to use them. Instructions or comments about a running or
   recent mission → "followup" to that mission.
 - "always … / never … / from now on …" → "rule" (and a followup too if it affects a running mission).
 - A message that answers or approves something waiting → "answer" / "approve" / "changes".

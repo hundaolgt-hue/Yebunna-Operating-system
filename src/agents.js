@@ -315,7 +315,10 @@ messages, publishes, or spends money. Clean up after yourself: delete temporary 
       : ''
   }
 Your current directory is the company's shared workspace. Teammates' files live there too
-(missions/<mission>/...). Read them when useful. Save real artifacts you create (code, copy, data,
+(missions/<mission>/...). Read them when useful. The founder's reference samples (images, videos,
+documents) are in references/<date>/: when a task mentions references, samples, examples or "this style",
+study them first. Look at images with the Read tool; for a video, extract about 1 frame per second with
+ffmpeg into a temp folder, Read the frames, then delete them. Save real artifacts you create (code, copy, data,
 docs) as files in the folder your assignment names. Never touch files outside the workspace.
 
 Your team (id: name, role — specialties):

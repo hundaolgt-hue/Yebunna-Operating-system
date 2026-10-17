@@ -142,3 +142,12 @@ test('replying to a "mission complete" message sends a comment to that mission',
   const thread = (await missions()).find((x) => x.id === m.id).thread;
   assert.ok(thread.some((i) => i.role === 'user' && /shorter/.test(i.text)), 'comment landed in the mission');
 });
+
+test('a photo with a caption is saved as a reference and handed to the CEO with its path', async () => {
+  inbox.push({ update_id: nextId++, message: { message_id: nextId++, chat: { id: CHAT, type: 'private' }, photo: [{ file_id: 'small' }, { file_id: 'big' }], caption: 'Make ads in this style' } });
+  await waitFor(() => sent.find((s) => /Started mission “Make ads in this style/.test(s.text)), 'a mission from the photo');
+  const m = (await missions()).find((x) => /Make ads in this style/.test(x.goal));
+  assert.match(m.goal, /references\/\d{4}-\d{2}-\d{2}\/photo-\d+\.jpg/, 'the goal names the saved file');
+  inbox.push({ update_id: nextId++, message: { message_id: nextId++, chat: { id: CHAT, type: 'private' }, video: { file_id: 'v1', file_name: 'sample.mp4' } } });
+  await waitFor(() => sent.find((s) => /Saved as references\/.*sample\.mp4/.test(s.text)), 'the saved-video reply');
+});

@@ -129,9 +129,27 @@ function statusText() {
 async function onMessage(msg) {
   const reply = (t) => sendLong(t, msg.message_id);
 
-  // Voice notes and audio files: transcribe, show what was heard, then treat it as text.
+  // Photos, videos and files: save them as references for the team.
   let text = String(msg.text || msg.caption || '').trim();
   let via = 'telegram';
+  const media = msg.photo ? { file: msg.photo.at(-1), name: `photo-${msg.message_id}.jpg` }
+    : msg.video ? { file: msg.video, name: msg.video.file_name || `video-${msg.message_id}.mp4` }
+    : msg.animation ? { file: msg.animation, name: msg.animation.file_name || `animation-${msg.message_id}.mp4` }
+    : msg.document ? { file: msg.document, name: msg.document.file_name || `file-${msg.message_id}` }
+    : null;
+  let attachments = [];
+  if (media) {
+    try {
+      attachments = [await saveReference(media.file.file_id, media.name)];
+    } catch (e) {
+      return reply(`📎 I couldn't save that file: ${e.message}`);
+    }
+    if (!text) {
+      // Albums arrive as one message per file; only the first carries the caption.
+      if (msg.media_group_id) return;
+      return reply(`📎 Saved as ${attachments[0]}. Tell me what to do with it — e.g. “make 3 ads in this style for ProfitCheck”.`);
+    }
+  }
   const audio = msg.voice || msg.audio || (msg.video_note ? msg.video_note : null);
   if (audio && !text) {
     typing();
@@ -171,7 +189,7 @@ async function onMessage(msg) {
   const slow = setTimeout(() => reply('⏳ Still thinking — I am checking the team’s work. I will answer here in a moment.'), 60_000);
   try {
     const { ceoChat } = await import('./ceochat.js');
-    return reply(await ceoChat(text, { via, focus: sent ? { missionId: sent.ref.id } : null }));
+    return reply(await ceoChat(text, { via, attachments, focus: sent ? { missionId: sent.ref.id } : null }));
   } finally {
     clearInterval(keepTyping);
     clearTimeout(slow);
@@ -195,6 +213,23 @@ async function sendLong(text, replyTo) {
   for (const [i, part] of parts.entries()) {
     await call(cfg().config.token, 'sendMessage', { chat_id: cfg().config.chatId, text: part, ...(i === 0 && replyTo ? { reply_to_message_id: replyTo } : {}) }).catch(() => {});
   }
+}
+
+/** Download a file the founder sent and keep it in references/<date>/. Bots can't use files over 20 MB from Telegram. */
+async function saveReference(fileId, name) {
+  const c = cfg().config;
+  const file = await call(c.token, 'getFile', { file_id: fileId }).catch((e) => {
+    throw new Error(/too big/i.test(e.message) ? 'Telegram only lets bots download files up to 20 MB. Upload bigger files in Yebunna OS → Files → Upload references.' : e.message);
+  });
+  const res = await fetch(`${API}/file/bot${c.token}/${file.file_path}`, { signal: AbortSignal.timeout(120_000) });
+  if (!res.ok) throw new Error(`download failed (HTTP ${res.status})`);
+  const { referencePath } = await import('./references.js');
+  const fs = await import('node:fs');
+  const target = referencePath(name);
+  fs.writeFileSync(target.full, Buffer.from(await res.arrayBuffer()));
+  tg().uploads = [{ path: target.rel, at: now() }, ...(tg().uploads || [])].slice(0, 30);
+  save();
+  return target.rel;
 }
 
 // ---- voice notes -------------------------------------------------------------------

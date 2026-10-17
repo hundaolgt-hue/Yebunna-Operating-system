@@ -105,6 +105,18 @@ test('house standards reach the visual bots; Lumen builds Ye-Buna landing pages'
   assert.equal(edited.edited, true);
 });
 
+test('reference files can be uploaded and are kept inside references/', async () => {
+  const res = await fetch(`${BASE}/api/upload?name=${encodeURIComponent('../../sample ad.png')}`, { method: 'POST', body: Buffer.from('fakepng') });
+  assert.equal(res.status, 201);
+  const { path: p } = await res.json();
+  assert.match(p, /^references\/\d{4}-\d{2}-\d{2}\/sample ad\.png$/, 'saved under references/, no path tricks');
+  const again = await (await fetch(`${BASE}/api/upload?name=sample%20ad.png`, { method: 'POST', body: Buffer.from('x') })).json();
+  assert.match(again.path, /sample ad-2\.png$/, 'never overwrites');
+  assert.equal((await fetch(`${BASE}/api/upload?name=a.png&folder=../outside`, { method: 'POST', body: 'x' })).status, 403);
+  const files = (await api('GET', '/api/files')).body.files.map((f) => f.path);
+  assert.ok(files.includes(p));
+});
+
 test('the UI is served', async () => {
   const res = await fetch(BASE + '/');
   assert.equal(res.status, 200);

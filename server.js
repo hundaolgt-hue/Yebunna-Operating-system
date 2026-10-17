@@ -27,6 +27,7 @@ import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
 import { seedHouseSkills } from './src/house.js';
 import { storageReport } from './src/disk.js';
+import { referencePath, MAX_UPLOAD } from './src/references.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
 import { listPacks, installPack, installAll, refreshPackOwners } from './src/skillpacks.js';
@@ -50,6 +51,13 @@ const TYPES = {
   '.webp': 'image/webp',
   '.pdf': 'application/pdf',
   '.ico': 'image/x-icon',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
 };
 const TEXT = /\.(md|txt|json|csv|tsv|js|mjs|ts|tsx|jsx|py|html|css|scss|yml|yaml|toml|sh|sql|xml|env|ini|log)$/i;
 
@@ -573,6 +581,35 @@ just answer (you may read the team's files) — no block.`
 
   // ---- shared workspace files ----
   'GET /api/files': (req, res) => send(res, 200, { root: WORKSPACE, files: walk(WORKSPACE) }),
+  // Upload a reference file (raw body; ?name=). Saved under references/<date>/ unless ?folder= is given.
+  'POST /api/upload': async (req, res) => {
+    const url = new URL(req.url, 'http://x');
+    need(url.searchParams.get('name'), 400, 'name is required');
+    need(Number(req.headers['content-length'] || 0) <= MAX_UPLOAD, 413, 'That file is too big (max 500 MB).');
+    let target;
+    try {
+      target = referencePath(url.searchParams.get('name'), url.searchParams.get('folder') || undefined);
+    } catch (e) {
+      throw new HttpError(403, e.message);
+    }
+    let size = 0;
+    const out = fs.createWriteStream(target.full);
+    try {
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > MAX_UPLOAD) throw new HttpError(413, 'That file is too big (max 500 MB).');
+        if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+      }
+      await new Promise((resolve, reject) => out.end((e) => (e ? reject(e) : resolve())));
+    } catch (e) {
+      out.destroy();
+      fs.rmSync(target.full, { force: true });
+      throw e.status ? e : new HttpError(e.code === 'ENOSPC' ? 507 : 500, e.code === 'ENOSPC' ? 'The disk is full.' : e.message);
+    }
+    logActivity('ceo', `received a reference file from you: ${target.rel}`);
+    bus.emit('event', { type: 'files' });
+    send(res, 201, { path: target.rel, size });
+  },
   'GET /api/file': async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const file = inWorkspace(url.searchParams.get('path'));

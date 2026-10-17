@@ -1,6 +1,7 @@
 import { S, $, $$, api, esc, markdown, view, fileUrl, toast } from '../core.js';
 
 const IMG = /\.(png|jpe?g|gif|webp|svg)$/i;
+const VIDEO = /\.(mp4|webm|mov|m4v)$/i;
 const fmtSize = (n) => (n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n > 1e3 ? `${Math.round(n / 1e3)} KB` : `${n} B`);
 
 export async function renderFiles(selected) {
@@ -19,7 +20,9 @@ export async function renderFiles(selected) {
   const folderFocus = selected && !file ? selected : null;
 
   v.innerHTML = `<div class="page files-page">
-    <div class="page-head"><h2>Files</h2><p>The shared workspace every bot works in: <code>${esc(root || '')}</code></p></div>
+    <div class="page-head"><h2>Files</h2><p>The shared workspace every bot works in: <code>${esc(root || '')}</code></p>
+      <span class="spacer"></span><label class="btn" title="Sample images, videos or documents for the team">⬆ Upload references<input type="file" multiple hidden data-upload /></label></div>
+    <p class="faint small" data-drop-hint>Drop sample images or videos anywhere on this page. They're saved in <code>references/</code>; then tell a bot (or the CEO) to use them, e.g. “Vega, make 3 ads in the style of references/${new Date().toISOString().slice(0, 10)}”.</p>
     ${
       visible.length
         ? `<div class="files">
@@ -37,14 +40,53 @@ export async function renderFiles(selected) {
     }
   </div>`;
 
+  wireUpload(v);
   if (!file) return;
   const body = $('[data-body]', v);
   if (IMG.test(file.path)) {
     body.innerHTML = `<img class="file-img" src="${fileUrl(file.path)}" alt="" />`;
+  } else if (VIDEO.test(file.path)) {
+    body.innerHTML = `<video class="file-img" src="${fileUrl(file.path)}" controls playsinline></video>`;
   } else if (file.size > 2e6) {
     body.innerHTML = '<div class="empty">Too large to preview — download it instead.</div>';
   } else {
     const text = await fetch(fileUrl(file.path)).then((r) => r.text());
     body.innerHTML = /\.md$/i.test(file.path) ? `<div class="md">${markdown(text)}</div>` : `<pre class="code"><code>${esc(text)}</code></pre>`;
   }
+}
+
+async function upload(files) {
+  let last = null;
+  for (const f of files) {
+    toast(`Uploading ${f.name}…`);
+    try {
+      const res = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', body: f });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      last = data.path;
+    } catch (e) {
+      toast(`${f.name}: ${e.message}`);
+      return;
+    }
+  }
+  if (last) {
+    toast(files.length > 1 ? `${files.length} files saved in ${last.slice(0, last.lastIndexOf('/'))}/` : `Saved as ${last}`);
+    location.hash = `#/files?f=${encodeURIComponent(last)}`;
+    renderFiles(last);
+  }
+}
+
+function wireUpload(v) {
+  $('[data-upload]', v)?.addEventListener('change', (e) => upload([...e.target.files]));
+  if (v.dataset.dropWired) return;
+  v.dataset.dropWired = '1';
+  v.addEventListener('dragover', (e) => {
+    if (!S.route.startsWith('files')) return;
+    e.preventDefault();
+  });
+  v.addEventListener('drop', (e) => {
+    if (!S.route.startsWith('files') || !e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    upload([...e.dataTransfer.files]);
+  });
 }
