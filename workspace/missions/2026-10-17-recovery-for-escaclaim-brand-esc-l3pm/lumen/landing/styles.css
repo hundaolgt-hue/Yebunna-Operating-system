@@ -49,8 +49,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .btn-sm { min-height: 44px; padding: 0 18px; font-size: 1rem; }
 
 /* ---------- hero ---------- */
-.hero { background: var(--navy); color: var(--on-navy); padding: clamp(28px, 6vw, 72px) var(--m) clamp(56px, 8vw, 120px); display: grid; gap: clamp(36px, 6vw, 72px); }
-.hero h1 { font-size: var(--t-xl); line-height: 1.08; max-width: 12.5em; }
+.hero { background: radial-gradient(90% 60% at 88% 8%, rgba(41, 66, 102, .55) 0%, rgba(14, 26, 43, 0) 62%), var(--navy); color: var(--on-navy); padding: clamp(28px, 6vw, 72px) var(--m) clamp(56px, 8vw, 120px); display: grid; gap: clamp(36px, 6vw, 72px); }
+.kicker { font-size: .9375rem; font-weight: 700; color: var(--amber); margin-bottom: 18px; letter-spacing: .01em; }
+.hero h1 { font-size: clamp(2.05rem, 8.2vw, 4.4rem); line-height: 1.1; max-width: 11.5em; }
 .hero-sub { margin-top: 20px; font-size: var(--t-m); color: var(--on-navy-2); max-width: 34em; line-height: 1.55; }
 .hero-action { margin-top: 32px; display: grid; gap: 14px; justify-items: start; }
 .avail { color: var(--on-navy-2); font-size: .9375rem; }
@@ -152,7 +153,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 @media (min-width: 960px) {
   .bar-links { display: flex; }
   .hero { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); align-items: center; min-height: calc(100svh - 72px); padding-left: max(var(--m), calc((100vw - 1200px) / 2)); padding-right: max(var(--m), calc((100vw - 1200px) / 2)); }
-  .hero .phone-frame { width: min(100%, 420px, calc((100svh - 160px) * 9 / 16)); justify-self: end; }
+  .hero .phone-frame { width: min(100%, 400px, calc((100svh - 220px) * 9 / 16)); justify-self: end; box-shadow: 0 40px 80px -30px rgba(0, 0, 0, .55); }
   .how { grid-template-columns: 1.2fr .8fr; }
   .how .phone-frame { justify-self: end; }
   .proof-grid { grid-template-columns: 5fr 7fr; grid-template-rows: auto auto; }
