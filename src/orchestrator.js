@@ -799,7 +799,7 @@ and file paths), deadline performance, risks/gaps, and the next 3 moves. Be conc
   m.completedAt = now();
   emitMission(m);
   logActivity('ceo', `finished “${m.title}” and filed the report`, { type: 'mission', id: m.id });
-  if (m.source === 'founder') notifyFounder(`✅ Mission complete — “${m.title}”. ${tasks.filter((t) => t.status === 'done').length}/${tasks.length} tasks delivered. The report is in Yebunna OS.`);
+  if (m.source === 'founder') notifyFounder(`✅ Mission complete — “${m.title}”. ${tasks.filter((t) => t.status === 'done').length}/${tasks.length} tasks delivered. The report is in Yebunna OS — reply here with comments or next steps.`, { type: 'mission', id: m.id });
   bus.emit('trigger', { event: 'mission_completed', mission: m });
 }
 

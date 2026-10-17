@@ -78,15 +78,18 @@ export const SERVICES = {
     fields: [
       { key: 'token', label: 'Bot token', secret: true, placeholder: '123456789:AA…' },
       { key: 'chatId', label: 'Your chat ID (optional — found automatically)', placeholder: 'filled in after the test' },
+      { key: 'sttKey', label: 'Voice notes: Groq or OpenAI API key (optional)', secret: true, placeholder: 'gsk_… (free at console.groq.com) or sk-…' },
+      { key: 'voiceLang', label: 'Voice note language: am, en or auto (optional)', placeholder: 'auto' },
     ],
     steps: [
       'In Telegram, open @BotFather, send /newbot, and pick a name and a username for your bot.',
       'BotFather replies with a token like 123456789:AA… — copy it and paste it below.',
       'Open your new bot in Telegram and press Start (or send it "hi"), so it is allowed to message you.',
       'Click Save & test. You get a test message, and your chat ID is filled in automatically.',
+      'Voice notes (optional): create a free API key at console.groq.com → API Keys and paste it below. Or, without a key, install Python and run "pip install faster-whisper" (free, runs on this PC, slower).',
     ],
     link: 'https://t.me/BotFather',
-    uses: 'Sends you a message when something only you can do is blocking a mission (a login, a decision, an approval), when the usage limit pauses work and when it resumes. Reply to an alert to answer it; /status shows what the team is doing.',
+    uses: 'Chat with the CEO by text or voice note: ask how things are going, give new work, comment on a mission, set rules. You also get a message when something only you can do is blocking a mission, when plans or deliverables need your OK, and when the usage limit pauses or resumes work.',
   },
   gdrive: {
     label: 'Google Drive',
