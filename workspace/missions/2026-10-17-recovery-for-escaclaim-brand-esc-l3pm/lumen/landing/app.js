@@ -69,10 +69,10 @@
   track('PageView');
 
   /* ---------- Videos: real <video> only when a src is configured, else the marked slot stays ---------- */
-  function mountVideo(fig, src, eager) {
+  function mountVideo(fig, src, eager, posterSrc) {
     if (!fig || !src) return;
     var slot = fig.querySelector('[data-slot]');
-    var poster = slot && slot.querySelector('img');
+    var poster = posterSrc ? { src: posterSrc } : (slot && slot.querySelector('img'));
     var vid = doc.createElement('video');
     vid.muted = true; vid.defaultMuted = true; vid.loop = true; vid.playsInline = true; vid.autoplay = true;
     ['muted', 'loop', 'playsinline', 'autoplay'].forEach(function (a) { vid.setAttribute(a, ''); });
@@ -88,8 +88,8 @@
     } else start();
   }
   var startVideos = function () {
-    mountVideo(doc.getElementById('hero-video'), C.VIDEO_60S_SRC, true);
-    mountVideo(doc.getElementById('how-video'), C.VIDEO_30S_SRC, false);
+    mountVideo(doc.getElementById('hero-video'), C.VIDEO_60S_SRC, true, C.VIDEO_60S_POSTER);
+    mountVideo(doc.getElementById('how-video'), C.VIDEO_30S_SRC, false, C.VIDEO_30S_POSTER);
   };
   if (doc.readyState === 'complete') startVideos(); else window.addEventListener('load', startVideos);
 
