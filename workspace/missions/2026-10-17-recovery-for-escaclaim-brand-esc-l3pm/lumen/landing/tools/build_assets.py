@@ -38,6 +38,14 @@ def build_images():
             out = OUT_IMG / f"{stem}-{w}.webp"
             im.resize((w2, h2), Image.LANCZOS).save(out, "WEBP", quality=82, method=6)
             print(f"{out.relative_to(HERE)}  {w2}x{h2}  {out.stat().st_size/1024:.0f} KB")
+    # share image (JPG for link previews) from the Solo cover
+    og = OUT_IMG / "og-escaclaim-1200x1200.jpg"
+    Image.open(KIT / "covers/cover_square.png").convert("RGB").resize((1200, 1200), Image.LANCZOS).save(og, "JPEG", quality=84, optimize=True, progressive=True)
+    print(f"{og.relative_to(HERE)}  1200x1200  {og.stat().st_size/1024:.0f} KB")
+    (OUT_IMG / "favicon.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#0E1A2B"/>'
+        '<rect x="14" y="36" width="8" height="14" fill="#F5A524"/><rect x="28" y="26" width="8" height="24" fill="#F5A524"/>'
+        '<rect x="42" y="14" width="8" height="36" fill="#F5A524"/></svg>', encoding="utf-8")
 
 def page_text():
     txt = ""
@@ -66,6 +74,7 @@ def build_fonts():
         opts.layout_features = ["*"]
         opts.name_IDs = ["*"]
         opts.notdef_outline = True
+        opts.hinting = False
         f = subset.load_font(str(src), opts)
         s = subset.Subsetter(opts)
         s.populate(text=chars)
