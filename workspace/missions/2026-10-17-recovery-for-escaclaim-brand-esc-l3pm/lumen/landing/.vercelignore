@@ -1,0 +1,7 @@
+tools
+README.md
+.vercel
+*.py
+*.mjs
+.env*
+.gitignore
