@@ -24,6 +24,9 @@ function taskCard(t, focusId) {
       <dl class="brief">
         <dt>Brief</dt><dd>${esc(t.brief)}</dd>
         <dt>Deliverable</dt><dd>${esc(t.deliverable)}</dd>
+        ${t.skills?.length ? `<dt>Skills</dt><dd>${t.skills.map((n) => `<span class="tag-s">${esc(n)}</span>`).join(' ')}</dd>` : ''}
+        ${t.inputs?.length ? `<dt>Inputs</dt><dd>${t.inputs.map((x) => esc(x)).join('<br>')}</dd>` : ''}
+        ${t.acceptance?.length ? `<dt>Acceptance</dt><dd><ul class="plain">${t.acceptance.map((x) => `<li>☐ ${esc(x)}</li>`).join('')}</ul></dd>` : ''}
         <dt>Deadline</dt><dd>${new Date(t.deadline).toLocaleString()}</dd>
         ${t.file ? `<dt>File</dt><dd><a class="link" href="#/files?f=${encodeURIComponent(t.file)}">${esc(t.file)}</a> · <a class="link" href="${fileUrl(t.file, true)}">download</a></dd>` : ''}
       </dl>

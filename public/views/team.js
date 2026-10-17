@@ -93,9 +93,15 @@ export function editBotDialog(agentId) {
         <label>Role / main job<input name="role" required maxlength="80" value="${esc(a.role)}" /></label>
       </div>
       <label>Responsibilities & personality <small>(this is the bot's core instruction — what it owns, how it works, its tone)</small>
-        <textarea name="persona" rows="8">${esc(a.persona || '')}</textarea></label>
+        <textarea name="persona" rows="16">${esc(a.persona || '')}</textarea></label>
       <label>Specialties <small>(comma separated — the CEO uses these to decide who gets which task)</small>
         <input name="specialties" value="${esc(a.specialties.join(', '))}" /></label>
+      <label>Core skills <small>(comma separated skill names — the bot opens and follows these on every task where they apply)</small>
+        <input name="coreSkills" list="skill-names" value="${esc((a.coreSkills || []).join(', '))}" /></label>
+      <datalist id="skill-names">${[...new Set(Object.values(S.skills).map((s) => s.name))].sort().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+      <p class="faint small" style="margin:-6px 0 0">${(a.coreSkills || [])
+        .map((n) => (Object.values(S.skills).some((s) => s.name.toLowerCase() === n.toLowerCase()) ? `✓ ${esc(n)}` : `<span style="color:var(--warn)">✕ ${esc(n)} (not installed — add it in Skills)</span>`))
+        .join(' · ')}</p>
       <label class="check"><input type="checkbox" name="web" ${a.web ? 'checked' : ''} /> Can search the web</label>
       <label class="check"><input type="checkbox" name="computer" ${a.computer ? 'checked' : ''} /> 🖥 Computer use — controls a real web browser (open sites, click, type, fill forms)</label>
       ${isCeo ? '<p class="faint small" style="margin:0">The CEO keeps its planning, delegation and review duties whatever you write here.</p>' : ''}

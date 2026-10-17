@@ -3,11 +3,16 @@
 import { state, save, newId, now } from './store.js';
 import { connectionTools, connectionPrompt } from './connections.js';
 import { playbookPrompt } from './playbook.js';
+import { PERSONAS, CORE_SKILLS } from './personas.js';
 
 const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products
 (SaaS tools, templates, courses, ebooks, apps, Notion kits, design assets, communities).
 You are part of a team of AI agents run by a CEO who delegates work with hard deadlines.
 Be concrete, decisive and practical. Produce real, usable work — not descriptions of work.
+QUALITY BAR: no generic, padded or sloppy output, ever. Every deliverable is specific to this product,
+this buyer and this market; uses real facts, numbers and sources (or clearly labelled estimates); is
+checked by you before you hand it in; and would impress a demanding founder. If you can't meet the bar
+with what you have, say exactly what is missing instead of filling the gap with filler.
 Use Markdown: short headings, bullet lists, tables where useful, and code blocks for code.`;
 
 // Every agent can read and write files in the shared workspace (Grok Bot's shared
@@ -20,113 +25,104 @@ export const BROWSER_TOOL = 'mcp__browser';
 const BUILTIN = [
   {
     id: 'ceo',
+    persona: PERSONAS.ceo,
+    coreSkills: CORE_SKILLS.ceo,
     name: 'Atlas',
     role: 'Chief Executive Officer',
     color: '#f5f5f5',
     specialties: ['Strategy', 'Delegation', 'Prioritization', 'Quality review'],
-    persona: `You are Atlas, the CEO. You turn the founder's goals into an executable plan, delegate each
-piece to the right specialist with a realistic deadline, hold the team to a high bar, and report back
-with crisp, honest summaries. You are a manager, not a doer: you never produce the specialists' work
-yourself — you plan, assign, review, unblock and report. You are direct, a little witty, and allergic to fluff.`,
   },
   {
     id: 'research',
+    computer: true, // Facebook Ad Library and Ye-Buna in a real browser
+    persona: PERSONAS.research,
+    coreSkills: CORE_SKILLS.research,
     tools: [...FILES, ...WEB],
     name: 'Nova',
     role: 'Market Research Analyst',
     color: '#60a5fa',
     specialties: ['Market sizing', 'Competitor teardown', 'Customer personas', 'Trend analysis'],
-    persona: `You are Nova, the market research analyst. You identify target customers, their pains and
-willingness to pay, size the opportunity, and tear down competitors. You state assumptions explicitly
-and turn findings into clear recommendations.`,
   },
   {
     id: 'product',
+    persona: PERSONAS.product,
+    coreSkills: CORE_SKILLS.product,
     name: 'Orion',
     role: 'Product Manager',
     color: '#a78bfa',
     specialties: ['PRDs', 'MVP scoping', 'Roadmaps', 'User stories'],
-    persona: `You are Orion, the product manager. You define what gets built: problem statements, MVP scope,
-user stories with acceptance criteria, prioritised roadmaps and success metrics. You cut scope ruthlessly.`,
   },
   {
     id: 'engineer',
+    persona: PERSONAS.engineer,
+    coreSkills: CORE_SKILLS.engineer,
     name: 'Forge',
     role: 'Lead Engineer',
     color: '#34d399',
     specialties: ['Architecture', 'Full-stack code', 'Automation', 'Integrations'],
-    persona: `You are Forge, the lead engineer. You choose pragmatic stacks, design architecture, and write
-working, production-quality code with file names, setup steps and tests. Prefer simple, cheap-to-run solutions.`,
   },
   {
     id: 'design',
+    persona: PERSONAS.design,
+    coreSkills: CORE_SKILLS.design,
     name: 'Pixel',
     role: 'Brand & UX Designer',
     color: '#f472b6',
     specialties: ['Brand identity', 'UI/UX flows', 'Design systems', 'Landing pages'],
-    persona: `You are Pixel, the brand and UX designer. You create names, brand voice, colour palettes (hex),
-typography, wireframes described precisely, user flows and design-system tokens that engineers can build from.`,
   },
   {
     id: 'creative',
+    persona: PERSONAS.creative,
+    coreSkills: CORE_SKILLS.creative,
     tools: [...FILES, ...WEB],
     name: 'Vega',
     role: 'Creative Director',
     color: '#e879f9',
     specialties: ['Creative direction', 'Ad creatives', 'AI images & video', 'Visual storytelling'],
-    persona: `You are Vega, the creative director. You turn a product and an audience into a clear creative
-concept, then produce the assets: ad stills, short vertical videos, product shots, thumbnails and
-storyboards. Every concept has a hook, a visual idea, copy and a format per channel. When Higgsfield is
-connected you generate the images and videos yourself and keep each asset on-brand and on-message.`,
   },
   {
     id: 'landing',
+    persona: PERSONAS.landing,
+    coreSkills: CORE_SKILLS.landing,
     tools: [...FILES, ...WEB],
     name: 'Lumen',
     role: 'Landing Page & Conversion Lead',
     color: '#4ade80',
     specialties: ['High-converting landing pages', 'Tutorial & ad videos on the page', 'Ye-Buna checkout funnels', 'Meta Pixel & Vercel'],
-    persona: `You are Lumen, the landing page and conversion lead. You build fast, premium, Amharic-first sales
-pages that turn ad clicks into buyers: the team's vertical ad video in the hero, the tutorial video showing
-how the product works, real proof, a clear price and one action. Every buy button sends the visitor to the
-product's Ye-Buna checkout page. You measure with the Meta Pixel and ship on Vercel.`,
   },
   {
     id: 'marketing',
+    persona: PERSONAS.marketing,
+    coreSkills: CORE_SKILLS.marketing,
     tools: [...FILES, ...WEB],
     name: 'Echo',
     role: 'Growth Marketer',
     color: '#fbbf24',
     specialties: ['Copywriting', 'Launch plans', 'SEO & content', 'Social & ads'],
-    persona: `You are Echo, the growth marketer. You write conversion-focused copy, launch plans, content
-calendars, SEO keyword maps, social posts and ad variations. Every plan has channels, timing and metrics.`,
   },
   {
     id: 'sales',
+    persona: PERSONAS.sales,
+    coreSkills: CORE_SKILLS.sales,
     tools: [...FILES, ...WEB],
     name: 'Ledger',
     role: 'Revenue & Finance Lead',
     color: '#fb923c',
     specialties: ['Pricing', 'Unit economics', 'Financial models', 'Sales funnels'],
-    persona: `You are Ledger, the revenue and finance lead. You design pricing and packaging, model unit
-economics and revenue scenarios with explicit numbers, plan funnels and track budget. Show your math.`,
   },
   {
     id: 'support',
+    persona: PERSONAS.support,
+    coreSkills: CORE_SKILLS.support,
     name: 'Harbor',
     role: 'Customer Success Lead',
     color: '#22d3ee',
     specialties: ['Onboarding', 'Help docs & FAQ', 'Email sequences', 'Feedback loops'],
-    persona: `You are Harbor, the customer success lead. You design onboarding, write help-centre articles,
-FAQs, support macros and lifecycle emails, and set up feedback loops that feed the product roadmap.`,
   },
 ];
 
-// Built-ins without explicit tools get file access only.
-for (const a of BUILTIN) {
-  a.tools ||= FILES;
-  a.persona = a.persona.replace(/\s*\n\s*/g, ' '); // one paragraph, so it edits cleanly in the UI
-}
+// Every built-in can read and write files and search the web; the CEO only checks facts and files.
+for (const a of BUILTIN) a.tools ||= [...FILES, ...WEB];
 
 const COLORS = ['#c084fc', '#2dd4bf', '#f87171', '#a3e635', '#818cf8', '#fda4af', '#facc15', '#38bdf8'];
 
@@ -177,11 +173,12 @@ export function createAgent({ name, role, description, specialties = [], web = f
 }
 
 /** Edit any bot's name, role, responsibilities/personality, specialties and web access. */
-export function updateAgent(id, { name, role, persona, specialties, web, computer }) {
+export function updateAgent(id, { name, role, persona, specialties, web, computer, coreSkills }) {
   const patch = {};
   if (name !== undefined) patch.name = String(name).trim().slice(0, 40) || undefined;
   if (role !== undefined) patch.role = String(role).trim().slice(0, 80) || undefined;
-  if (persona !== undefined) patch.persona = String(persona).trim().slice(0, 4000) || undefined;
+  if (persona !== undefined) patch.persona = String(persona).trim().slice(0, 12000) || undefined;
+  if (coreSkills !== undefined) patch.coreSkills = (Array.isArray(coreSkills) ? coreSkills : String(coreSkills).split(',')).map((x) => String(x).trim()).filter(Boolean).slice(0, 12);
   if (specialties !== undefined) patch.specialties = (Array.isArray(specialties) ? specialties : String(specialties).split(',')).map((x) => String(x).trim()).filter(Boolean).slice(0, 8);
   if (web !== undefined) patch.web = Boolean(web);
   if (computer !== undefined) patch.computer = Boolean(computer);
@@ -258,6 +255,25 @@ export function agentSkills(agentId) {
   return Object.values(state.skills).filter((s) => s.status === 'active' && skillOwnedBy(s, agentId));
 }
 
+/** Find an installed skill by name (case-insensitive). */
+export const skillByName = (name) => {
+  const want = String(name).trim().toLowerCase();
+  return Object.values(state.skills).find((s) => s.name.toLowerCase() === want && s.status !== 'failed') || null;
+};
+
+/** A bot's core skills, resolved: [{ name, skill | null }]. */
+export function coreSkillsOf(agent) {
+  return (agent.coreSkills || []).map((name) => ({ name, skill: skillByName(name) }));
+}
+
+/** Every installed skill, for the CEO to pick from when briefing a task. */
+export function skillCatalog() {
+  return Object.values(state.skills)
+    .filter((s) => s.status === 'active' && !s.house)
+    .map((s) => `- ${s.name}: ${String(s.summary || '').slice(0, 140)}${s.path ? ` → ${s.path}` : ' (written skill)'}`)
+    .join('\n');
+}
+
 /** Find a bot from whatever the CEO wrote: id, name, role or a close match. */
 export function resolveAgent(ref) {
   if (!ref) return null;
@@ -288,8 +304,17 @@ export function systemPrompt(agent) {
   const owned = agentSkills(agent.id);
   // Written skills are included in full: house standards always, plus the latest six others.
   const skills = [...owned.filter((s) => s.house), ...owned.filter((s) => !s.path && !s.house).slice(-6)];
-  const library = owned.filter((s) => s.path).slice(0, 80); // skill packs: read on demand
+  const core = coreSkillsOf(agent);
+  const coreNames = new Set(core.map((c) => c.name.toLowerCase()));
+  const library = owned.filter((s) => s.path && !coreNames.has(s.name.toLowerCase())).slice(0, 80); // skill packs: read on demand
   return `${agent.persona}
+${
+    core.length
+      ? `\nYOUR CORE SKILLS: use them on every task where they apply. Before you start, open the SKILL.md of each one
+that applies (Read tool), then follow it. They are not optional.
+${core.map((c) => (c.skill ? `- ${c.skill.name}: ${String(c.skill.summary).slice(0, 160)} → ${c.skill.path || '(written skill: see below)'}` : `- ${c.name}: not installed on this PC yet; work without it and mention that in your deliverable`)).join('\n')}\n`
+      : ''
+  }
 
 ${COMPANY}
 ${playbookPrompt()}${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}${
@@ -341,6 +366,6 @@ ${library.map((s) => `- ${s.name}: ${String(s.summary).slice(0, 150)} → ${s.pa
 }
 
 export function publicAgent(a) {
-  const { id, name, role, color, specialties, tools = [], custom = false, edited = false, computer = false } = a;
-  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), computer, custom, edited, persona: a.persona };
+  const { id, name, role, color, specialties, tools = [], custom = false, edited = false, computer = false, coreSkills = [] } = a;
+  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), computer, custom, edited, persona: a.persona, coreSkills };
 }

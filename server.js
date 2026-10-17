@@ -31,6 +31,7 @@ import { referencePath, MAX_UPLOAD } from './src/references.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
 import { listPacks, installPack, installAll, refreshPackOwners } from './src/skillpacks.js';
+import { installSkillArchive, importClaudeSkills, initCustomSkills } from './src/skillimport.js';
 import { listConnections, saveConnection, removeConnection, testConnection } from './src/connections.js';
 import { logActivity, toolTracker } from './src/activity.js';
 import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
@@ -541,6 +542,22 @@ just answer (you may read the team's files) — no block.`
 
   // ---- skill packs & role skills ----
   'GET /api/skill-packs': (req, res) => send(res, 200, listPacks()),
+  'POST /api/skills/upload': async (req, res) => {
+    const url = new URL(req.url, 'http://x');
+    const chunks = [];
+    let size = 0;
+    for await (const c of req) {
+      size += c.length;
+      if (size > 200 * 1024 ** 2) throw new HttpError(413, 'That skill file is too big (max 200 MB).');
+      chunks.push(c);
+    }
+    try {
+      send(res, 201, installSkillArchive(Buffer.concat(chunks), url.searchParams.get('name') || 'upload.skill'));
+    } catch (e) {
+      throw new HttpError(400, e.message);
+    }
+  },
+  'POST /api/skills/import-claude': (req, res) => send(res, 200, importClaudeSkills()),
   'POST /api/skill-packs/install': async (req, res) => {
     const { id } = await readBody(req);
     if (id) installPack(id).catch(() => {});
@@ -668,6 +685,7 @@ const server = http.createServer(async (req, res) => {
 
 seedHouseSkills();
 refreshPackOwners();
+initCustomSkills();
 resumeAll();
 resumeMeetings();
 if (allAgents().some((a) => a.computer)) warmBrowser();

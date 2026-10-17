@@ -10,7 +10,7 @@
 // falls back to a written summary if the CEO can't produce one.
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAgent, systemPrompt, remember, toolsFor, resolveAgent, specialists } from './agents.js';
+import { getAgent, systemPrompt, remember, toolsFor, resolveAgent, specialists, skillCatalog, skillByName } from './agents.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, newId, now, slugify, WORKSPACE } from './store.js';
 import { bus } from './bus.js';
@@ -28,6 +28,8 @@ const ceo = () => getAgent('ceo');
 // The CEO manages; it inspects work but never produces specialist deliverables itself.
 const CEO_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 const controllers = new Map(); // missionId -> AbortController
+const taskRuns = new Map(); // taskId -> AbortController of the run in progress
+const STALL_MS = Math.max(5, Number(process.env.STALL_MINUTES || 20)) * 60_000;
 
 // ---- events -----------------------------------------------------------------
 
@@ -86,6 +88,66 @@ export const missionTasks = (m) => m.taskIds.map((id) => state.tasks[id]).filter
 const OPEN = ['queued', 'in_progress', 'review', 'approval', 'blocked', 'founder'];
 const MAX_UNBLOCKS = 2; // CEO attempts per task before it goes to the founder
 
+// What every brief must contain before a bot may start (the CEO's briefing standard).
+const briefingStandard = () => `BRIEFING STANDARD: a bot starts only when its task is abundantly clear. Each brief is a complete
+prompt for a specialist who knows nothing else, containing:
+1. Objective and why it matters for the business.
+2. Context and inputs: teammates' files by path (missions/...), the founder's references (references/...),
+   facts, numbers, decisions already made.
+3. Approach: the steps you expect, in order, and the quality bar ("excellent" looks like ...).
+4. Skills: pick the best skills for the task from the catalog below, by exact name; the bot opens and
+   follows them. If nothing in the catalog fits, name the capability needed and tell the bot to search for
+   a skill with find-skills (skills.sh, \`npx skills find <topic>\`), install it into .skills/ and use it.
+5. Acceptance criteria: at least 3 checkable criteria you will review against.
+6. Deliverable: exact files, formats, sizes, language. Boundaries: no spending, posting or publishing
+   unless the founder asked.
+
+SKILL CATALOG (installed; name: what it does → file):
+${skillCatalog() || '- (no skills installed yet)'}`;
+
+/** Tasks whose brief isn't clear enough to start (too short, no acceptance criteria). */
+function unclearTasks(tasks) {
+  return tasks
+    .filter((t) => String(t.brief || '').length < 300 || !Array.isArray(t.acceptance) || t.acceptance.length < 2)
+    .map((t) => `"${t.title || t.key}"`);
+}
+
+/**
+ * Direct assignments, routines and meeting action items skip planning, so the CEO briefs them
+ * first: one run turns the short request into complete briefs (skills, acceptance criteria).
+ */
+async function ceoBrief(m, specs) {
+  const raw = await complete({
+    system: systemPrompt(ceo()),
+    messages: [
+      {
+        role: 'user',
+        content: `Before these tasks start, turn each one into a complete brief.
+Mission: ${m.goal}
+Deadline: ${fmt(m.deadline)}
+Tasks (keep each task's key, agent and due_in_hours):
+${JSON.stringify(specs.map(({ key, agent, title, brief, deliverable, due_in_hours, size, skillId }) => ({ key, agent, title, brief, deliverable, due_in_hours, size, skill: skillId && state.skills[skillId]?.name })), null, 1)}
+
+${briefingStandard()}
+
+Reply with ONLY JSON: {"tasks": [{"key": "...", "brief": "...", "inputs": [...], "skills": [...], "acceptance": [...], "deliverable": "...", "size": "small" | "medium" | "large"}]}`,
+      },
+    ],
+    tools: CEO_TOOLS,
+    maxTurns: 15,
+    effort: 'medium',
+    agentId: 'ceo',
+    kind: 'plan',
+    signal: signal(m),
+    demo: () => JSON.stringify({ tasks: specs.map((s) => ({ key: s.key, acceptance: ['Matches the brief', 'Saved as files', 'Checked before hand-in'] })) }),
+  });
+  const byKey = Object.fromEntries((extractJson(raw).tasks || []).map((t) => [t.key, t]));
+  return specs.map((s) => {
+    const b = byKey[s.key] || {};
+    return { ...s, brief: b.brief || s.brief, inputs: b.inputs || s.inputs, skills: b.skills || s.skills, acceptance: b.acceptance || s.acceptance, deliverable: b.deliverable || s.deliverable, size: s.size || b.size };
+  });
+}
+
 /** The specialists, with what each can use, for the CEO's decisions. */
 function teamList() {
   return specialists()
@@ -135,12 +197,46 @@ export function createMission({ goal, deadline, source }) {
 export function createMissionWithTasks({ goal, deadline, specs, intro, source = 'founder' }) {
   const m = newMission({ goal, deadline, source });
   addThread(m, { role: 'user', kind: 'text', text: goal });
-  const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [], text: intro || 'Assigned. Work starts now.' });
-  addTasks(m, item, specs);
-  m.status = 'running';
+  const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [], text: intro || 'Assigned.' });
+  const keyed = specs.map((s, i) => ({ ...s, key: s.key || `t${i}` }));
+  addTasks(m, item, keyed);
+  // The CEO briefs the work before anyone starts (skills, steps, acceptance criteria).
+  m.status = 'planning';
   emitMission(m);
-  schedule(m);
+  const note = addThread(m, { role: 'ceo', kind: 'review', text: '📝 Writing the brief: the skills to use, the steps and the acceptance criteria…' });
+  ceoBrief(m, keyed)
+    .then((briefed) => {
+      for (const b of briefed) {
+        const t = missionTasks(m).find((x) => x.key === b.key);
+        if (t) Object.assign(t, taskBriefFields(b));
+      }
+      note.text = '📝 Brief ready — the team is starting.';
+    })
+    .catch((e) => {
+      if (isLimitError(e) || m.status === 'cancelled') throw e;
+      note.text = `📝 I couldn't write a full brief (${e.message}); starting with the request as given.`;
+    })
+    .then(() => {
+      if (m.status !== 'planning') return;
+      m.status = 'running';
+      emitMission(m);
+      schedule(m);
+      drainQueue(m);
+    })
+    .catch((e) => fail(m, e));
   return m;
+}
+
+/** The brief fields a task keeps from a plan or a CEO brief. */
+function taskBriefFields(s) {
+  const list = (x) => (Array.isArray(x) ? x : x ? [x] : []).map(String).filter(Boolean).slice(0, 12);
+  return {
+    ...(s.brief ? { brief: String(s.brief) } : {}),
+    ...(s.deliverable ? { deliverable: String(s.deliverable) } : {}),
+    inputs: list(s.inputs),
+    skills: list(s.skills),
+    acceptance: list(s.acceptance),
+  };
 }
 
 /**
@@ -255,6 +351,10 @@ export function resumeAll() {
     if (m.status === 'running' || m.status === 'reporting') {
       m.status = 'running';
       schedule(m);
+    } else if (m.status === 'planning' && missionTasks(m).length && !m.thread.some((it) => it.kind === 'plan' && !it.taskIds?.length)) {
+      // Interrupted while briefing assigned tasks: just start them.
+      m.status = 'running';
+      schedule(m);
     } else if (m.status === 'planning') {
       // Interrupted mid-plan: drop the half-written plan message and plan again.
       m.thread = m.thread.filter((it) => !(it.kind === 'plan' && !it.taskIds?.length));
@@ -290,6 +390,8 @@ function addTasks(m, item, specs) {
       brief: String(s.brief || ''),
       deliverable: String(s.deliverable || ''),
       skillId: s.skillId || null,
+      key: s.key,
+      ...taskBriefFields(s),
       size: ['small', 'medium', 'large'].includes(s.size) ? s.size : 'medium',
       deadline: new Date(due).toISOString(),
       dependsOn: (s.depends_on || []).map((k) => keyToId[k]).filter(Boolean),
@@ -334,30 +436,46 @@ for dependencies. Give each task a size — it decides how much of the founder's
 "small" = a quick, short piece (a few posts, a list, a short email, a check, a summary of given input);
 "medium" = a normal deliverable (a plan, a document, a page of copy, light research);
 "large" = heavy work only (code or a multi-file build, a spreadsheet model, deep multi-source research,
-long browser work). Most tasks are small or medium; use large only when the task really needs it. Keep it to ${instruction ? '1–3' : '4–8'} focused tasks. Use depends_on (task keys) when a
-task needs another's output. Each brief must say exactly what to produce and which files to save.
+long browser work). Most tasks are small or medium; use large only when the task really needs it. Keep it to ${instruction ? '1–3' : '3–7'} focused tasks. Use depends_on (task keys) when a
+task needs another's output: think through the order first, so every task has its inputs when it starts.
+
+${briefingStandard()}
 
 Reply with ONLY a JSON object, no other text:
-{"summary": "<2–4 sentence message to the founder explaining who does what>",
- "tasks": [{"key": "t1", "agent": "<specialist id>", "title": "<short imperative>", "brief": "<what to do and why>",
-            "deliverable": "<the concrete artifact to hand back>", "due_in_hours": <number>, "size": "small" | "medium" | "large", "depends_on": ["<key>"]}]}`;
+{"summary": "<2–4 sentence message to the founder: the strategy in one line, then who does what, in what order>",
+ "tasks": [{"key": "t1", "agent": "<specialist id>", "title": "<short imperative>",
+            "brief": "<the complete brief: objective and why, context, step-by-step approach, quality bar>",
+            "inputs": ["<file paths or facts the bot must use>"],
+            "skills": ["<exact skill names from the catalog>"],
+            "acceptance": ["<checkable criterion>", "..."],
+            "deliverable": "<the concrete files/artifact to hand back, with format>", "due_in_hours": <number>, "size": "small" | "medium" | "large", "depends_on": ["<key>"]}]}`;
 
   let parsed;
+  let retry = '';
   for (let attempt = 1; ; attempt++) {
     const raw = await streamInto(m, item, {
       system: systemPrompt(ceo()),
-      messages: [{ role: 'user', content: attempt === 1 ? prompt : `${prompt}\n\nYour previous reply was not valid JSON. Reply with the JSON object only.` }],
+      messages: [{ role: 'user', content: `${prompt}${retry}` }],
       effort: 'high',
       json: true,
       kind: 'plan',
+      tools: CEO_TOOLS, // read teammates' files and skills, look up skills on the web
+      maxTurns: 25,
       demo: () => demoPlan(m.goal, hoursLeft(m), instruction),
     });
     try {
       parsed = extractJson(raw);
       if (!Array.isArray(parsed.tasks) || !parsed.tasks.length) throw new Error('The plan had no tasks.');
+      // Clarity gate: no task starts on a vague brief.
+      const thin = unclearTasks(parsed.tasks);
+      if (thin.length && attempt < 3) {
+        retry = `\n\nYour previous plan is not clear enough to start. These tasks need a complete brief (objective and why, context, steps, skills, at least 3 acceptance criteria, exact deliverable): ${thin.join('; ')}. Reply with the full corrected JSON.`;
+        continue;
+      }
       break;
     } catch (e) {
-      if (attempt >= 2) throw new Error(`I couldn't produce a usable plan (${e.message})`);
+      if (attempt >= 3) throw new Error(`I couldn't produce a usable plan (${e.message})`);
+      retry = '\n\nYour previous reply was not valid JSON. Reply with the JSON object only.';
     }
   }
   const dropped = addTasks(m, item, parsed.tasks);
@@ -444,11 +562,15 @@ function assignmentPrompt(m, t, agent, previous) {
     ? `\n\nYour previous version was sent back. Feedback: ${t.feedback}\n\nPrevious version:\n${clip(previous, 4000)}\n\nDeliver an improved, complete version.`
     : '';
   const workDir = `${m.folder}/${slugify(agent.name, 20)}`;
+  const skills = (t.skills || []).map((name) => {
+    const s = skillByName(name);
+    return s ? `- ${s.name} → ${s.path ? `Read ${s.path} and follow it` : 'written skill (in your instructions)'}` : `- ${name} → not installed yet: search for it with find-skills (\`npx skills find ${name}\`), install it into .skills/ and use it; if you can't, do the task without it and say so`;
+  });
   return `Assignment from ${ceo().name} (CEO)
 Company goal: ${m.goal}
 Your task: ${t.title}
 Brief: ${t.brief}
-Deliverable: ${t.deliverable}
+Deliverable: ${t.deliverable}${t.inputs?.length ? `\nInputs to use:\n${t.inputs.map((x) => `- ${x}`).join('\n')}` : ''}${skills.length ? `\nSkills the CEO picked for this task (open each SKILL.md before you start, and follow it):\n${skills.join('\n')}` : ''}${t.acceptance?.length ? `\nAcceptance criteria (the CEO reviews against these, so check them yourself before handing in):\n${t.acceptance.map((x) => `- ${x}`).join('\n')}` : ''}
 Deadline: ${fmt(t.deadline)} (now: ${fmt(now())})
 Your folder in the shared workspace: ${workDir}/  (mission folder: ${m.folder}/)
 ${skill ? `\nUse your skill "${skill.name}":\n${skill.path ? `Read ${skill.path} and follow it.` : skill.body}\n` : ''}${inputs ? `\nInputs from teammates:\n${inputs}` : ''}${revision}
@@ -489,7 +611,15 @@ async function runTask(m, t) {
   logActivity(agent.id, `started “${t.title}”`, ref);
   const track = toolTracker(agent.id, ref);
 
+  // The task's own stop switch (the stall watchdog uses it), tied to the mission's.
+  const ctl = new AbortController();
+  const stopWithMission = () => ctl.abort();
+  signal(m).addEventListener('abort', stopWithMission, { once: true });
+  taskRuns.set(t.id, ctl);
+  t.lastActivityAt = now();
+  t.stalled = false;
   const onEvent = (ev) => {
+    t.lastActivityAt = now();
     if (ev.type === 'turn') {
       // Text before a tool call was working-out-loud: move it to Thoughts, keep the answer clean.
       if (t.output) t.reasoning += `${t.output}\n`;
@@ -512,7 +642,7 @@ async function runTask(m, t) {
         kind: 'task',
         size: t.size,
         maxTurns,
-        signal: signal(m),
+        signal: ctl.signal,
         demo: () => demoOutput(t.agentId, t, m.goal),
       },
       onEvent,
@@ -559,6 +689,10 @@ async function runTask(m, t) {
     }
   } catch (e) {
     if (m.status === 'cancelled') return;
+    if (t.stalled) {
+      t.stalled = false;
+      return handleBlocker(m, t, { reason: `No progress for ${Math.round(STALL_MS / 60_000)} minutes — the run was stopped. Last thing it did: ${String(t.reasoning || t.output).trim().split('\n').slice(-3).join(' ').slice(0, 300) || 'nothing yet'}`, need: '' });
+    }
     if (isLimitError(e)) {
       // Usage limit: put it back in the queue untouched; it restarts when the limit resets.
       if (t.status === 'review') t.reviewOnly = true;
@@ -569,6 +703,9 @@ async function runTask(m, t) {
     }
     // Any other failure goes to the CEO like a blocker, instead of silently failing the task.
     return handleBlocker(m, t, { reason: `The run failed: ${e.message}`, need: '' });
+  } finally {
+    taskRuns.delete(t.id);
+    signal(m).removeEventListener('abort', stopWithMission);
   }
   emitTask(t);
   schedule(m);
@@ -733,11 +870,11 @@ async function ceoReview(m, t) {
 Task: ${t.title}
 Brief: ${t.brief}
 Expected deliverable: ${t.deliverable}
-
+${t.acceptance?.length ? `Acceptance criteria:\n${t.acceptance.map((x) => `- ${x}`).join('\n')}\n` : ''}
 Deliverable:
 ${clip(t.output, 8000)}
 
-Approve if it is complete, specific and usable. Otherwise ask for a revision with precise feedback.
+Approve only if it meets every acceptance criterion and is specific, verified and premium, not generic. Otherwise ask for a revision with precise, actionable feedback.
 Reply with ONLY JSON: {"verdict": "approve" | "revise", "feedback": "<one or two sentences>"}`,
         },
       ],
@@ -858,6 +995,21 @@ bus.on('limit.reset', () => {
     schedule(m);
   }
 });
+
+// ---- stall watchdog: the CEO checks that work is really moving ----------------
+
+setInterval(() => {
+  const t0 = Date.now();
+  for (const [taskId, ctl] of taskRuns) {
+    const t = state.tasks[taskId];
+    if (!t || t.status !== 'in_progress' || !t.lastActivityAt) continue;
+    if (t0 - Date.parse(t.lastActivityAt) < STALL_MS) continue;
+    // No output, thinking or tool use for too long: stop the run; the CEO works out why.
+    t.stalled = true;
+    logActivity('ceo', `stopped “${t.title}”: no progress for ${Math.round(STALL_MS / 60_000)} minutes`, { type: 'task', id: t.id, missionId: t.missionId });
+    ctl.abort();
+  }
+}, 60_000).unref();
 
 // ---- deadline watchdog ------------------------------------------------------
 

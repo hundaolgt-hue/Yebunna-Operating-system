@@ -47,7 +47,7 @@ before(async () => {
     cwd: ROOT,
     env: {
       ...process.env,
-      DEMO_MODE: '1',
+      DEMO_MODE: '1', IMPORT_CLAUDE_SKILLS: '0',
       SKILL_PACKS: '0',
       PORT: String(PORT),
       DATA_DIR: path.join(TMP, 'data'),

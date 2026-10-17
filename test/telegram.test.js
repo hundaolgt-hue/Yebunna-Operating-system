@@ -73,7 +73,7 @@ before(async () => {
   }).listen(TG_PORT);
   server = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
-    env: { ...process.env, DEMO_MODE: '1', SKILL_PACKS: '0', PORT: String(PORT), DATA_DIR: path.join(TMP, 'data'), WORKSPACE_DIR: path.join(TMP, 'ws'), TELEGRAM_API: `http://localhost:${TG_PORT}`, TELEGRAM_STT_URL: `http://localhost:${TG_PORT}/stt` },
+    env: { ...process.env, DEMO_MODE: '1', IMPORT_CLAUDE_SKILLS: '0', SKILL_PACKS: '0', PORT: String(PORT), DATA_DIR: path.join(TMP, 'data'), WORKSPACE_DIR: path.join(TMP, 'ws'), TELEGRAM_API: `http://localhost:${TG_PORT}`, TELEGRAM_STT_URL: `http://localhost:${TG_PORT}/stt` },
     stdio: 'ignore',
   });
   await waitFor(() => fetch(BASE + '/api/meta').then((r) => r.ok, () => false), 'server start', 15_000);

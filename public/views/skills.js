@@ -8,7 +8,8 @@ export function renderSkills() {
   const all = Object.values(S.skills).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const own = all.filter((s) => !s.path);
   const library = all.filter((s) => s.path);
-  const packs = S.packs || [];
+  const groupOf = (s) => s.pack || '__custom';
+  const packs = [{ id: '__custom', label: 'Your own skills (uploaded or from Claude Code)', status: 'installed' }, ...(S.packs || [])];
   const busyPacks = packs.some((p) => p.status === 'installing');
   const openGroups = new Set($$('details.lib-group[open]', view()).map((d) => d.dataset.pack));
   view().innerHTML = `<div class="page">
@@ -19,6 +20,7 @@ export function renderSkills() {
       <div class="row"><h3>Skill packs</h3><span class="spacer"></span><button class="btn-ghost" data-install-all ${busyPacks ? 'disabled' : ''}>${busyPacks ? 'Installing…' : '⬇ Install / update all'}</button></div>
       <p class="side-text">Community skill libraries (the same ones <code>npx skills add</code> installs), downloaded into your workspace with git and given to the right bots. Bots open a skill's SKILL.md when a task matches it.</p>
       <div class="pack-grid">${packs
+        .filter((p) => p.id !== '__custom')
         .map(
           (p) => `<div class="pack ${p.status === 'installed' ? 'ok' : p.status === 'failed' ? 'bad' : ''}">
             <b>${esc(p.label)}</b><small>${esc(p.repo)}${p.commit ? ` @ ${esc(p.commit)}` : ''}</small>
@@ -27,6 +29,11 @@ export function renderSkills() {
           </div>`,
         )
         .join('')}</div>
+    </section>
+
+    <section class="settings packs">
+      <div class="row"><h3>Your skill files</h3><span class="spacer"></span><button class="btn-ghost" data-import-claude title="Copy the skills Claude Code keeps on this PC (your claude.ai skills)">⟳ Import from Claude Code</button><label class="btn">⬆ Upload .skill / .zip<input type="file" accept=".skill,.zip" multiple hidden data-upload-skill /></label></div>
+      <p class="side-text">Add your own skills, such as higgsfield-motion or rapha-motion-video: upload the <code>.skill</code> file you downloaded from Claude, or import the skills Claude Code keeps on this PC (<code>%USERPROFILE%\\.claude\\skills</code>, checked every start). They stay on this PC. Known skills go to the right bots automatically; the CEO assigns any skill per task.</p>
     </section>
 
     <h3 class="section-title">Your skills <span class="count">${own.length}</span></h3>
@@ -40,11 +47,11 @@ export function renderSkills() {
       library.length
         ? `<h3 class="section-title">Skill library <span class="count">${library.length}</span></h3>
       <div class="library">${packs
-        .filter((p) => library.some((s) => s.pack === p.id))
+        .filter((p) => library.some((s) => groupOf(s) === p.id))
         .map(
-          (p) => `<details class="lib-group" data-pack="${p.id}" ${openGroups.has(p.id) || library.filter((s) => s.pack === p.id).length <= 3 ? 'open' : ''}><summary><b>${esc(p.label)}</b> <span class="count">${library.filter((s) => s.pack === p.id).length}</span></summary>
+          (p) => `<details class="lib-group" data-pack="${p.id}" ${openGroups.has(p.id) || library.filter((s) => groupOf(s) === p.id).length <= 3 ? 'open' : ''}><summary><b>${esc(p.label)}</b> <span class="count">${library.filter((s) => groupOf(s) === p.id).length}</span></summary>
           ${library
-            .filter((s) => s.pack === p.id)
+            .filter((s) => groupOf(s) === p.id)
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(
               (s) => `<div class="lib-row">
@@ -63,6 +70,23 @@ export function renderSkills() {
   </div>`;
   const v = view();
   $('[data-new]', v).addEventListener('click', () => editSkillDialog());
+  $('[data-import-claude]', v).addEventListener('click', () =>
+    api('/api/skills/import-claude', { method: 'POST' })
+      .then((r) => toast(r.found ? `Found ${r.found} Claude Code skills — ${r.imported.length ? `added or updated: ${r.imported.join(', ')}` : 'all already up to date'}.` : 'No Claude Code skills found on this PC (%USERPROFILE%\\.claude\\skills). Upload .skill files instead.'))
+      .catch((e) => toast(e.message)),
+  );
+  $('[data-upload-skill]', v).addEventListener('change', async (e) => {
+    for (const f of e.target.files) {
+      try {
+        const res = await fetch(`/api/skills/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', body: f });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        toast(`Installed: ${data.map((s) => s.name).join(', ')}`);
+      } catch (err) {
+        toast(`${f.name}: ${err.message}`);
+      }
+    }
+  });
   $('[data-teach]', v).addEventListener('click', () => teachDialog());
   $('[data-teach2]', v)?.addEventListener('click', () => teachDialog());
   $('[data-gen-all]', v).addEventListener('click', () =>
@@ -117,7 +141,11 @@ function card(s) {
   const drafting = s.status === 'drafting';
   const frames = s.teach ? Array.from({ length: Math.min(4, s.teach.frames) }, (_, i) => Math.floor((i * (s.teach.frames - 1)) / 3) + 1) : [];
   return `<div class="skill-card">
-    <div class="row">${s.agentId === 'any' ? '<div class="avatar sm" style="background:#555;color:#fff">∗</div>' : avatar(s.agentId, 'sm')}<span class="faint">${s.agentId === 'any' ? 'Any bot' : esc(agentName(s.agentId))}${s.source === 'role' ? ' · from its role' : ''}</span>
+    <div class="row">${
+      !s.agentId && s.agentIds?.length
+        ? `<div class="avatars">${s.agentIds.map((id) => avatar(id, 'sm')).join('')}</div><span class="faint">${s.house ? 'House standard · ' : ''}${s.agentIds.map((id) => esc(agentName(id))).join(', ')}</span>`
+        : `${s.agentId === 'any' ? '<div class="avatar sm" style="background:#555;color:#fff">∗</div>' : avatar(s.agentId, 'sm')}<span class="faint">${s.agentId === 'any' ? 'Any bot' : esc(agentName(s.agentId))}${s.source === 'role' ? ' · from its role' : ''}</span>`
+    }
       <span class="spacer"></span><span class="status ${s.status === 'active' ? 'done' : s.status === 'failed' ? 'failed' : 'review'}">${drafting ? 'drafting…' : s.status}</span></div>
     <h3>${esc(s.name)}</h3>
     ${frames.length ? `<div class="frames">${frames.map((n) => `<img src="${fileUrl(`${s.teach.dir}/frame-${String(n).padStart(3, '0')}.jpg`)}" alt="" loading="lazy" />`).join('')}</div>` : ''}

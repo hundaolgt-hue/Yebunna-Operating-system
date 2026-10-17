@@ -18,7 +18,7 @@ after(() => {
 
 async function boot(env) {
   const port = 4100 + Math.floor(Math.random() * 800);
-  const p = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, DEMO_MODE: '1', SKILL_PACKS: '0', PORT: String(port), ...env }, stdio: 'ignore' });
+  const p = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, DEMO_MODE: '1', IMPORT_CLAUDE_SKILLS: '0', SKILL_PACKS: '0', PORT: String(port), ...env }, stdio: 'ignore' });
   procs.push(p);
   const base = `http://localhost:${port}`;
   for (let i = 0; i < 60; i++) {
