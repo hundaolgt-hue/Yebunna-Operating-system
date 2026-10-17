@@ -79,13 +79,30 @@ test('Higgsfield connection belongs to the Creative Director', async () => {
   assert.ok(meta.agents.some((a) => a.id === 'creative' && a.role === 'Creative Director'));
   const hf = (await api('GET', '/api/connections')).body.find((c) => c.id === 'higgsfield');
   assert.ok(hf, 'listed on the Connections page');
-  assert.deepEqual(hf.bots, ['creative']);
+  assert.deepEqual(hf.bots, ['creative', 'design']);
   const saved = (await api('PUT', '/api/connections/higgsfield', { config: {}, bots: ['creative'] })).body;
   assert.equal(saved.enabled, true, 'no token needed to turn it on');
   const st = (await api('POST', '/api/connections/higgsfield/test')).body;
   assert.equal(st.ok, false, 'demo mode cannot check the Claude Code login');
   assert.match(st.error, /Claude Code/);
   assert.equal((await api('DELETE', '/api/connections/higgsfield')).status, 200);
+});
+
+test('house standards reach the visual bots; Lumen builds Ye-Buna landing pages', async () => {
+  const st = (await api('GET', '/api/state')).body;
+  const creative = st.skills.find((s) => s.id === 'house_creative_standards');
+  const landing = st.skills.find((s) => s.id === 'house_landing_pages');
+  assert.ok(creative && landing);
+  for (const bot of ['design', 'creative', 'landing']) assert.ok(creative.agentIds.includes(bot), bot);
+  assert.deepEqual(landing.agentIds, ['landing']);
+  assert.match(creative.body, /1080×1920/);
+  assert.match(creative.body, /No voiceover/);
+  assert.match(landing.body, /Ye-Buna checkout/);
+  const lumen = (await api('GET', '/api/meta')).body.agents.find((a) => a.id === 'landing');
+  assert.equal(lumen.role, 'Landing Page & Conversion Lead');
+  // Edits stick: an edited house skill is marked so app updates never overwrite it.
+  const edited = (await api('PUT', '/api/skills/house_creative_standards', { body: creative.body + '\nExtra rule.' })).body;
+  assert.equal(edited.edited, true);
 });
 
 test('the UI is served', async () => {

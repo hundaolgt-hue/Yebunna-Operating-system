@@ -25,9 +25,10 @@ import { addRule, removeRule, listRules } from './src/playbook.js';
 import { resume as resumeAfterLimit } from './src/limits.js';
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
+import { seedHouseSkills } from './src/house.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
-import { listPacks, installPack, installAll } from './src/skillpacks.js';
+import { listPacks, installPack, installAll, refreshPackOwners } from './src/skillpacks.js';
 import { listConnections, saveConnection, removeConnection, testConnection } from './src/connections.js';
 import { logActivity, toolTracker } from './src/activity.js';
 import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
@@ -620,6 +621,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+seedHouseSkills();
+refreshPackOwners();
 resumeAll();
 resumeMeetings();
 if (allAgents().some((a) => a.computer)) warmBrowser();

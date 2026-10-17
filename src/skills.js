@@ -33,6 +33,7 @@ export function createSkill({ name, agentId = 'any', summary = '', body = '', st
 
 export function updateSkill(s, patch) {
   for (const k of ['name', 'agentId', 'summary', 'body', 'status']) if (patch[k] !== undefined) s[k] = patch[k];
+  if (s.house && (patch.body !== undefined || patch.name !== undefined || patch.summary !== undefined)) s.edited = true; // app updates won't overwrite it
   if (Array.isArray(patch.agentIds)) {
     s.agentIds = patch.agentIds;
     s.ownersEdited = true; // keep the founder's choice when the pack updates

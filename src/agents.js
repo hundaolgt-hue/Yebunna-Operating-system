@@ -80,6 +80,18 @@ storyboards. Every concept has a hook, a visual idea, copy and a format per chan
 connected you generate the images and videos yourself and keep each asset on-brand and on-message.`,
   },
   {
+    id: 'landing',
+    tools: [...FILES, ...WEB],
+    name: 'Lumen',
+    role: 'Landing Page & Conversion Lead',
+    color: '#4ade80',
+    specialties: ['High-converting landing pages', 'Tutorial & ad videos on the page', 'Ye-Buna checkout funnels', 'Meta Pixel & Vercel'],
+    persona: `You are Lumen, the landing page and conversion lead. You build fast, premium, Amharic-first sales
+pages that turn ad clicks into buyers: the team's vertical ad video in the hero, the tutorial video showing
+how the product works, real proof, a clear price and one action. Every buy button sends the visitor to the
+product's Ye-Buna checkout page. You measure with the Meta Pixel and ship on Vercel.`,
+  },
+  {
     id: 'marketing',
     tools: [...FILES, ...WEB],
     name: 'Echo',
@@ -274,7 +286,8 @@ export function roster() {
 export function systemPrompt(agent) {
   const memory = (state.memory[agent.id] || []).slice(-15);
   const owned = agentSkills(agent.id);
-  const skills = owned.filter((s) => !s.path).slice(-6); // written skills: included in full
+  // Written skills are included in full: house standards always, plus the latest six others.
+  const skills = [...owned.filter((s) => s.house), ...owned.filter((s) => !s.path && !s.house).slice(-6)];
   const library = owned.filter((s) => s.path).slice(0, 80); // skill packs: read on demand
   return `${agent.persona}
 

@@ -11,7 +11,7 @@ export const SERVICES = {
   github: {
     label: 'GitHub',
     icon: '🐙',
-    bots: ['engineer', 'ceo'],
+    bots: ['engineer', 'landing', 'ceo'],
     fields: [{ key: 'token', label: 'Personal access token', secret: true, placeholder: 'github_pat_… or ghp_…' }],
     steps: [
       'Open github.com/settings/personal-access-tokens/new (fine-grained token).',
@@ -25,7 +25,7 @@ export const SERVICES = {
   vercel: {
     label: 'Vercel',
     icon: '▲',
-    bots: ['engineer', 'design'],
+    bots: ['engineer', 'design', 'landing'],
     needsTerminal: true,
     fields: [
       { key: 'token', label: 'Access token', secret: true, placeholder: 'Vercel token' },
@@ -58,7 +58,7 @@ export const SERVICES = {
   higgsfield: {
     label: 'Higgsfield (AI images & video)',
     icon: '🎬',
-    bots: ['creative'],
+    bots: ['creative', 'design'],
     // No token: Higgsfield's MCP server signs in with OAuth. Claude Code keeps that login
     // and reuses it for bot runs, because they use the same server name and URL.
     fields: [],
