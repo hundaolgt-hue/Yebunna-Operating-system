@@ -152,13 +152,18 @@ function toPrompt(messages) {
 // Code processes so a subscription is not rate-limited into failures.
 const MAX_RUNS = Math.max(1, Number(process.env.MAX_CONCURRENT_RUNS || 4));
 const RUN_TIMEOUT_MS = Math.max(1, Number(process.env.RUN_TIMEOUT_MINUTES || 45)) * 60_000;
+// The founder never waits behind the team: chats get one extra, reserved slot and go to
+// the front of the queue, so the CEO answers even while every bot is busy.
 let running = 0;
 const waiting = [];
-async function acquire(signal) {
-  if (running < MAX_RUNS) return void running++;
+export const runStats = () => ({ running, waiting: waiting.length, max: MAX_RUNS });
+export const _slots = { acquire: (...a) => acquire(...a), release: () => releaseSlot() }; // for tests
+async function acquire(signal, priority = false) {
+  if (running < MAX_RUNS + (priority ? 1 : 0)) return void running++;
   await new Promise((resolve, reject) => {
-    const entry = { resolve };
-    waiting.push(entry);
+    const entry = { resolve, priority };
+    if (priority) waiting.splice(waiting.filter((w) => w.priority).length, 0, entry);
+    else waiting.push(entry);
     signal?.addEventListener('abort', () => {
       const i = waiting.indexOf(entry);
       if (i >= 0) waiting.splice(i, 1);
@@ -167,9 +172,13 @@ async function acquire(signal) {
   });
 }
 function releaseSlot() {
-  const next = waiting.shift();
-  if (next) next.resolve(); // hand the slot straight over
-  else running--;
+  // Hand the slot straight over — but a normal run may only take it if that keeps
+  // normal work within MAX_RUNS (the extra slot is for the founder's chats).
+  const next = waiting[0];
+  if (next && (next.priority || running - 1 < MAX_RUNS)) {
+    waiting.shift();
+    next.resolve();
+  } else running--;
 }
 
 /** Thrown when a run used up its step budget; carries whatever it had written. */
@@ -250,7 +259,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
 
   // Paused on the plan's usage limit: don't spend a run finding that out again.
   if (limited()) throw new UsageLimitError(state.limit.kind === 'disk' ? 'Paused: the disk is almost full. Free some space and work resumes by itself.' : `Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
-  await acquire(signal);
+  await acquire(signal, kind === 'chat');
   if (limited()) {
     releaseSlot();
     throw new UsageLimitError('Paused until your Claude usage limit resets.', state.limit.resetAt);

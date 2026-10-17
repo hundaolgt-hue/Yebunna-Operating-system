@@ -100,6 +100,20 @@ export async function answerItem(ref, text) {
   return "I couldn't match that reply.";
 }
 
+async function healthText() {
+  const { runStats, providerInfo } = await import('./llm.js');
+  const r = runStats();
+  const p = providerInfo();
+  const d = state.disk;
+  return [
+    `Engine: ${p.name === 'demo' ? '⚠️ offline demo — Claude Code was not found' : `Claude Code ${p.cli || ''}`}`,
+    `Claude runs: ${r.running} busy of ${r.max} (+1 kept free for you), ${r.waiting} waiting`,
+    state.limit ? `⏸ Paused (${state.limit.kind === 'disk' ? 'disk almost full' : 'usage limit'}) until ${new Date(state.limit.resetAt).toLocaleString()}` : '▶️ Not paused',
+    d ? `Disk: ${(d.free / 1024 ** 3).toFixed(1)} GB free${d.saveError ? ` — ${d.saveError}` : ''}` : null,
+    `Telegram: ${health.lastError ? `last error ${health.lastError}` : 'OK'}`,
+  ].filter(Boolean).join('\n');
+}
+
 function statusText() {
   const missions = Object.values(state.missions).filter((m) => ['planning', 'running', 'reporting', 'awaiting_approval'].includes(m.status));
   const lines = missions.slice(0, 8).map((m) => {
@@ -132,8 +146,9 @@ async function onMessage(msg) {
   }
   if (!text) return;
 
-  if (/^\/(start|help)\b/i.test(text)) return reply('Talk to me like you talk to your CEO — by text or voice note. Ask how things are going, give new work, comment on a mission, or set rules ("from now on …"). I act on it and keep the team moving.\n\nI also message you when something only you can do is blocking the team; reply to that message to answer it.\n\n/status — what the team is doing and what waits on you\n/answer <number> <text> — answer an item from /status\n/resume — try again now after a usage-limit pause');
+  if (/^\/(start|help)\b/i.test(text)) return reply('Talk to me like you talk to your CEO — by text or voice note. Ask how things are going, give new work, comment on a mission, or set rules ("from now on …"). I act on it and keep the team moving.\n\nI also message you when something only you can do is blocking the team; reply to that message to answer it.\n\n/status — what the team is doing and what waits on you\n/answer <number> <text> — answer an item from /status\n/resume — try again now after a usage-limit pause\n/health — is everything running?');
   if (/^\/status\b/i.test(text)) return reply(statusText());
+  if (/^\/health\b/i.test(text)) return reply(await healthText());
   if (/^\/resume\b/i.test(text)) {
     if (!state.limit) return reply('Nothing is paused.');
     const { resume } = await import('./limits.js');
@@ -153,11 +168,13 @@ async function onMessage(msg) {
   // Everything else is a conversation with the CEO, who can act on it.
   typing();
   const keepTyping = setInterval(typing, 4500);
+  const slow = setTimeout(() => reply('⏳ Still thinking — I am checking the team’s work. I will answer here in a moment.'), 60_000);
   try {
     const { ceoChat } = await import('./ceochat.js');
     return reply(await ceoChat(text, { via, focus: sent ? { missionId: sent.ref.id } : null }));
   } finally {
     clearInterval(keepTyping);
+    clearTimeout(slow);
   }
 }
 
@@ -243,6 +260,8 @@ async function transcribeLocally(audio, lang) {
 // ---- long polling ----------------------------------------------------------------
 
 let polling = false;
+export const health = { lastPollAt: null, lastError: null, lastErrorAt: null };
+export const isPolling = () => polling;
 let generation = 0;
 export function restartPolling() {
   generation++;
@@ -259,14 +278,20 @@ async function poll(gen) {
       try {
         updates = await call(token, 'getUpdates', { offset: tg().offset, timeout: 50, allowed_updates: ['message'] }, 65_000);
       } catch (e) {
-        if (/conflict|unauthorized|not found/i.test(e.message)) console.error('Telegram polling:', e.message);
+        health.lastError = e.message;
+        health.lastErrorAt = new Date().toISOString();
+        if (/conflict/i.test(e.message)) console.error('Telegram: another copy of Yebunna OS (or another program) is reading this bot. Close the other one — only one may run at a time.');
+        else console.error('Telegram polling:', e.message);
         await new Promise((r) => setTimeout(r, 15_000));
         continue;
       }
+      health.lastPollAt = new Date().toISOString();
+      health.lastError = null;
       for (const u of updates) {
         tg().offset = u.update_id + 1;
         // Only the founder's own chat may talk to the company.
-        if (u.message && String(u.message.chat?.id) === String(cfg().config.chatId)) await onMessage(u.message).catch((e) => console.error('Telegram reply failed:', e.message));
+        // Handled in parallel: a long CEO answer never holds up /status or the next message.
+        if (u.message && String(u.message.chat?.id) === String(cfg().config.chatId)) onMessage(u.message).catch((e) => console.error('Telegram reply failed:', e.message));
       }
       if (updates.length) save();
     }

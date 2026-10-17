@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allAgents, getAgent, publicAgent, systemPrompt, createAgent, updateAgent, resetAgent, deleteAgent, remember, forget, toolsFor, setComputerForAll } from './src/agents.js';
 import { state, save, now, WORKSPACE } from './src/store.js';
-import { providerInfo, streamChat, complete, detectionReport, warmBrowser } from './src/llm.js';
+import { providerInfo, streamChat, complete, detectionReport, warmBrowser, runStats } from './src/llm.js';
 import { demoChat } from './src/demo.js';
 import {
   bus,
@@ -469,6 +469,10 @@ just answer (you may read the team's files) — no block.`
   },
 
   'GET /api/storage': (req, res) => send(res, 200, storageReport()),
+  'GET /api/health': async (req, res) => {
+    const tg = await import('./src/telegram.js');
+    send(res, 200, { runs: runStats(), limit: state.limit, disk: state.disk, telegram: { polling: tg.isPolling(), ...tg.health } });
+  },
 
   // ---- usage limit ----
   'POST /api/limit/resume': (req, res) => {
