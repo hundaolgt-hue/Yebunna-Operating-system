@@ -66,6 +66,11 @@ IMAGES: always deliver the ad set.
   Put the source and licence of every track in your deliverable.
 - Mix: music bed under the effects, fade in and out, no clipping.
 
+## Keep the disk clean
+Rendering writes thousands of frames. Render frames and temporary files into a temp folder, and delete it
+as soon as the MP4 is encoded and checked. Keep only the final videos, images and their sources (HTML,
+scripts), never frame dumps, duplicate exports or downloaded models. Delete drafts the task didn't ask for.
+
 ## Check before you hand in
 Check every file before delivering it: run ffprobe on videos (resolution, fps, codec, duration, audio
 present) and use PIL on images (size). Grab 3–4 frames of each video, look at them for quality, safe
@@ -110,7 +115,7 @@ correctly. List the page URL, the files, and the checkout link used.`;
 export const HOUSE_SKILLS = [
   {
     id: 'house_creative_standards',
-    version: 1,
+    version: 2,
     name: 'House creative standards (premium Facebook ads)',
     summary: 'Fortune 500 launch-ad quality; motion and aesthetic references; Facebook ad sizes; vertical video only; Amharic on-screen text; sound effects and classical music only, no voiceover.',
     body: CREATIVE,

@@ -249,7 +249,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
 
   // Paused on the plan's usage limit: don't spend a run finding that out again.
-  if (limited()) throw new UsageLimitError(`Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
+  if (limited()) throw new UsageLimitError(state.limit.kind === 'disk' ? 'Paused: the disk is almost full. Free some space and work resumes by itself.' : `Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
   await acquire(signal);
   if (limited()) {
     releaseSlot();

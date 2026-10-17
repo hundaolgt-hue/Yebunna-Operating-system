@@ -69,10 +69,10 @@ function nextClockTime(hour, minute, timeZone, from) {
 }
 
 /** A run hit the limit: pause everything until it resets. */
-export function hitLimit(message, resetAt) {
+export function hitLimit(message, resetAt, kind = 'usage') {
   const wake = resetAt && Date.parse(resetAt) > Date.now() ? resetAt : new Date(Date.now() + CHECK_HOURS * 36e5).toISOString();
   const already = state.limit;
-  state.limit = { since: already?.since || now(), resetAt: wake, known: Boolean(resetAt), message: String(message).slice(0, 300) };
+  state.limit = { since: already?.since || now(), resetAt: wake, known: Boolean(resetAt), message: String(message).slice(0, 300), kind };
   save();
   arm();
   bus.emit('event', { type: 'limit', limit: state.limit });

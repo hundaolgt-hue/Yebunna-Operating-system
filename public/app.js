@@ -197,6 +197,9 @@ function onEvent(e) {
   } else if (e.type === 'limit') {
     S.limit = e.limit;
     renderLimit();
+  } else if (e.type === 'disk') {
+    S.disk = e.disk;
+    renderLimit();
   } else if (e.type === 'usage') {
     S.usage = e.usage;
   } else if (e.type === 'packs') {
@@ -236,6 +239,7 @@ async function loadState() {
   S.usage = st.usage || null;
   S.rules = st.rules || [];
   S.limit = st.limit || null;
+  S.disk = st.disk || null;
   renderLimit();
   refresh('state');
 }
@@ -243,6 +247,12 @@ async function loadState() {
 // Paused on the Claude usage limit: say so on every page, with when it resumes.
 function renderLimit() {
   const el = $('#limit-banner');
+  const gb = S.disk ? (S.disk.free / 1024 ** 3).toFixed(1) : '?';
+  if (S.limit?.kind === 'disk' || (!S.limit && S.disk && S.disk.status !== 'ok')) {
+    el.hidden = false;
+    el.innerHTML = `<span>💾 <b>${S.limit ? 'Paused — the disk is almost full' : 'Disk space is low'}</b> (${gb} GB free).${S.limit ? ' Work resumes by itself once there is room.' : ''}${S.disk?.saveError ? ` ${esc(S.disk.saveError)}` : ''}</span><span class="spacer"></span><a class="btn-ghost" href="#/settings">See what uses space</a>`;
+    return;
+  }
   el.hidden = !S.limit;
   if (!S.limit) return;
   const at = new Date(S.limit.resetAt).toLocaleString();

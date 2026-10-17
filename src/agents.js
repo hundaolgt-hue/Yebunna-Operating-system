@@ -310,7 +310,8 @@ recalculate and check spreadsheets (openpyxl/pandas), process data, or test code
 to open the files to verify your work. Check results yourself before you report them. Never run destructive
 commands, never touch files outside the workspace, never install software globally (a local
 "pip install --user" or a project virtualenv is fine when needed), and never run anything that sends
-messages, publishes, or spends money.\n`
+messages, publishes, or spends money. Clean up after yourself: delete temporary files you created
+(rendered frames, caches, test downloads) once the task is done, and keep only the deliverables.\n`
       : ''
   }
 Your current directory is the company's shared workspace. Teammates' files live there too
