@@ -282,7 +282,9 @@ async function poll(gen) {
 // work has really been running for a few minutes, and a re-hit within that time is not re-announced.
 let resumedAt = 0;
 let resumeNote = null;
+bus.on('disk.alert', (text) => notifyFounder(text));
 bus.on('limit.hit', (limit) => {
+  if (limit.kind === 'disk') return; // disk.alert already said it
   if (Date.now() - resumedAt < 5 * 60_000) return void clearTimeout(resumeNote);
   notifyFounder(`⏸ Your Claude usage limit was reached. All work is paused and resumes automatically ${limit.known ? `when it resets (${new Date(limit.resetAt).toLocaleString()})` : `at ${new Date(limit.resetAt).toLocaleString()} — I'll keep checking every couple of hours`}.\n/resume tries again sooner.`);
 });

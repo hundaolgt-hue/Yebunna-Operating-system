@@ -26,6 +26,7 @@ import { resume as resumeAfterLimit } from './src/limits.js';
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
 import { seedHouseSkills } from './src/house.js';
+import { storageReport } from './src/disk.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
 import { listPacks, installPack, installAll, refreshPackOwners } from './src/skillpacks.js';
@@ -141,6 +142,7 @@ const routes = {
       usage: state.usage || null,
       rules: listRules(),
       limit: state.limit,
+      disk: state.disk,
     }),
 
   'GET /api/events': (req, res) => {
@@ -383,7 +385,7 @@ just answer (you may read the team's files) — no block.`
           reply.content = '';
         } else if (ev.type === 'text') reply.content += ev.text;
         else {
-          reply.reasoning += ev.text;
+          if (reply.reasoning.length < 50_000) reply.reasoning += ev.text;
           track(ev.text);
         }
         write(ev);
@@ -465,6 +467,8 @@ just answer (you may read the team's files) — no block.`
     removeRule(id);
     send(res, 200, { ok: true });
   },
+
+  'GET /api/storage': (req, res) => send(res, 200, storageReport()),
 
   // ---- usage limit ----
   'POST /api/limit/resume': (req, res) => {

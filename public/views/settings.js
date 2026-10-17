@@ -37,6 +37,11 @@ export function renderSettings() {
       ${usageTable()}
     </section>
     <section class="settings">
+      <h3>Storage</h3>
+      <p class="side-text">Bots save their work, renders and browser profiles in the workspace folder on this PC. If the disk gets nearly full, the team pauses by itself and resumes when there is room again.</p>
+      <div data-storage><p class="faint small">Measuring…</p></div>
+    </section>
+    <section class="settings">
       <h3>Engine</h3>
       <div class="kv"><span>Running on</span><b>${p.name === 'demo' ? 'Offline demo (Claude Code not found)' : `Claude via Claude Code ${esc(p.cli || '')}`}</b></div>
       <div class="kv"><span>Model</span><b>${esc(MODES[mode][0])}${mode !== 'economy' ? ` · big model: ${esc(p.model === 'default' ? 'your Claude Code default' : p.model || '')}` : ''}</b></div>
@@ -50,6 +55,7 @@ export function renderSettings() {
       <div class="kv"><span>Read aloud (🔊 on replies)</span><b>${'speechSynthesis' in window ? 'Available' : 'Not supported'}</b></div>
     </section>
   </div>`;
+  loadStorage();
   const put = (body) =>
     api('/api/settings', { method: 'PUT', body })
       .then((s) => ((S.settings = s), toast('Saved.')))
@@ -102,4 +108,23 @@ function usageTable() {
       <table class="usage-table">${head}${rows(today.byKind, (k) => KIND[k] || k)}</table>
       ${today.byModel ? `<table class="usage-table">${head}${rows(today.byModel, (k) => k)}</table>` : ''}
       <p class="faint small">“≈ API $” is what the same work would cost on the pay-per-use API — not a charge on your plan, just a relative measure of how much limit each part uses.</p></details>` : ''}`;
+}
+
+const size = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : b >= 1024 ** 2 ? `${Math.round(b / 1024 ** 2)} MB` : `${Math.round(b / 1024)} KB`);
+const WHAT = { '.browser': 'browser profiles of bots with computer use', '.skills': 'downloaded skill packs' };
+
+async function loadStorage() {
+  const box = document.querySelector('[data-storage]');
+  if (!box) return;
+  try {
+    const r = await api('/api/storage');
+    const d = r.disk;
+    box.innerHTML = `${d ? `<div class="kv"><span>Free on this drive</span><b style="color:${d.status === 'ok' ? 'inherit' : 'var(--bad)'}">${size(d.free)} of ${size(d.total)}</b></div>` : ''}
+      <div class="kv"><span>Workspace</span><code>${esc(r.workspace)}</code></div>
+      ${r.folders.length ? `<table class="usage-table"><tr><th>Folder</th><th class="num">size</th></tr>${r.folders.map((f) => `<tr><td>${esc(f.name)}${WHAT[f.name] ? ` <span class="faint">— ${WHAT[f.name]}</span>` : ''}</td><td class="num">${size(f.size)}</td></tr>`).join('')}</table>` : ''}
+      ${r.largest.length ? `<details><summary class="faint small" style="cursor:pointer;margin-top:8px">Largest files</summary><table class="usage-table">${r.largest.map((f) => `<tr><td><a class="link" href="#/files?f=${encodeURIComponent(f.path)}">${esc(f.path)}</a></td><td class="num">${size(f.size)}</td></tr>`).join('')}</table></details>` : ''}
+      <p class="faint small">To free space, delete old mission folders or large files you don't need (in File Explorer, inside the workspace folder above), or empty Windows' temp files (Settings → System → Storage → Temporary files).</p>`;
+  } catch (e) {
+    box.innerHTML = `<p class="faint small">${esc(e.message)}</p>`;
+  }
 }

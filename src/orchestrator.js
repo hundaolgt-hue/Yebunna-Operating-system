@@ -693,6 +693,7 @@ function fileDeliverable(m, t) {
 function finishTask(m, t) {
   t.status = 'done';
   t.completedAt = now();
+  if (t.reasoning?.length > 20_000) t.reasoning = `…${t.reasoning.slice(-20_000)}`; // keep saved data small
   t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
   fileDeliverable(m, t);
   logActivity(t.agentId, `delivered “${t.title}”${t.late ? ' (late)' : ''}`, { type: 'task', id: t.id, missionId: m.id });
@@ -826,6 +827,10 @@ bus.on('limit.hit', (limit) => {
   const when = new Date(limit.resetAt).toLocaleString();
   for (const m of Object.values(state.missions)) {
     if (!['running', 'planning', 'reporting'].includes(m.status)) continue;
+    if (limit.kind === 'disk') {
+      addThread(m, { role: 'ceo', kind: 'review', text: '⏸ Paused — the disk is almost full. Work in progress went back in the queue and restarts by itself once there is free space (Settings → Storage shows what is using it).' });
+      continue;
+    }
     addThread(m, { role: 'ceo', kind: 'review', text: `⏸ Paused — your Claude usage limit was reached. Work in progress went back in the queue and restarts automatically ${limit.known ? `when the limit resets (${when})` : `at ${when} (I check again every couple of hours)`}.` });
   }
 });
