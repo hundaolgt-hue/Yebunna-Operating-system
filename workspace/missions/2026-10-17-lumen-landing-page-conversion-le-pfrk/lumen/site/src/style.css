@@ -36,6 +36,7 @@ h3{font-size:var(--fs-h3)}
 .btn-sm{min-height:40px;padding:0 var(--s-5);font-size:.9375rem}
 .btn-block{width:100%;max-width:420px}
 a.btn-cta,a.btn-ghost{text-decoration:none;text-align:center}
+a.btn-ghost{display:inline-flex;align-items:center;justify-content:center}
 
 /* CTA inert state (placeholder link) */
 .btn-cta[data-inert="true"]{cursor:not-allowed;background:var(--mist-300);color:var(--slate-600);box-shadow:none}
