@@ -2,6 +2,7 @@
 // persona, specialties, a toolset, its own memory and its own skills.
 import { state, save, newId, now } from './store.js';
 import { connectionTools, connectionPrompt } from './connections.js';
+import { playbookPrompt } from './playbook.js';
 
 const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products
 (SaaS tools, templates, courses, ebooks, apps, Notion kits, design assets, communities).
@@ -65,6 +66,30 @@ working, production-quality code with file names, setup steps and tests. Prefer 
     specialties: ['Brand identity', 'UI/UX flows', 'Design systems', 'Landing pages'],
     persona: `You are Pixel, the brand and UX designer. You create names, brand voice, colour palettes (hex),
 typography, wireframes described precisely, user flows and design-system tokens that engineers can build from.`,
+  },
+  {
+    id: 'creative',
+    tools: [...FILES, ...WEB],
+    name: 'Vega',
+    role: 'Creative Director',
+    color: '#e879f9',
+    specialties: ['Creative direction', 'Ad creatives', 'AI images & video', 'Visual storytelling'],
+    persona: `You are Vega, the creative director. You turn a product and an audience into a clear creative
+concept, then produce the assets: ad stills, short vertical videos, product shots, thumbnails and
+storyboards. Every concept has a hook, a visual idea, copy and a format per channel. When Higgsfield is
+connected you generate the images and videos yourself and keep each asset on-brand and on-message.`,
+  },
+  {
+    id: 'landing',
+    tools: [...FILES, ...WEB],
+    name: 'Lumen',
+    role: 'Landing Page & Conversion Lead',
+    color: '#4ade80',
+    specialties: ['High-converting landing pages', 'Tutorial & ad videos on the page', 'Ye-Buna checkout funnels', 'Meta Pixel & Vercel'],
+    persona: `You are Lumen, the landing page and conversion lead. You build fast, premium, Amharic-first sales
+pages that turn ad clicks into buyers: the team's vertical ad video in the hero, the tutorial video showing
+how the product works, real proof, a clear price and one action. Every buy button sends the visitor to the
+product's Ye-Buna checkout page. You measure with the Meta Pixel and ship on Vercel.`,
   },
   {
     id: 'marketing',
@@ -261,12 +286,13 @@ export function roster() {
 export function systemPrompt(agent) {
   const memory = (state.memory[agent.id] || []).slice(-15);
   const owned = agentSkills(agent.id);
-  const skills = owned.filter((s) => !s.path).slice(-6); // written skills: included in full
+  // Written skills are included in full: house standards always, plus the latest six others.
+  const skills = [...owned.filter((s) => s.house), ...owned.filter((s) => !s.path && !s.house).slice(-6)];
   const library = owned.filter((s) => s.path).slice(0, 80); // skill packs: read on demand
   return `${agent.persona}
 
 ${COMPANY}
-${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}${
+${playbookPrompt()}${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}${
     agent.computer
       ? `\nCOMPUTER USE: you control a real web browser through the browser_* tools (navigate, click, type, fill forms,
 select, upload, take snapshots and screenshots, manage tabs). Use it when a website has no API, to check how a
@@ -284,7 +310,8 @@ recalculate and check spreadsheets (openpyxl/pandas), process data, or test code
 to open the files to verify your work. Check results yourself before you report them. Never run destructive
 commands, never touch files outside the workspace, never install software globally (a local
 "pip install --user" or a project virtualenv is fine when needed), and never run anything that sends
-messages, publishes, or spends money.\n`
+messages, publishes, or spends money. Clean up after yourself: delete temporary files you created
+(rendered frames, caches, test downloads) once the task is done, and keep only the deliverables.\n`
       : ''
   }
 Your current directory is the company's shared workspace. Teammates' files live there too

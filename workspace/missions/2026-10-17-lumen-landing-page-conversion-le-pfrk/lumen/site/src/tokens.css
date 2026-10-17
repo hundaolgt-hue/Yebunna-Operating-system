@@ -1,0 +1,107 @@
+/* EscaClaim landing — design tokens v1 (Pixel). Brand: EscaClaim only. */
+:root{
+  /* Colour: one base family + one accent. Amber ONLY on CTAs, prices, focus. */
+  --ink-900:#0A1626;   /* page base, dark sections */
+  --navy-800:#0E2138;  /* brand navy, hero, footer */
+  --navy-700:#16304F;  /* raised surface on dark */
+  --navy-600:#223F63;  /* borders on dark */
+  --paper-50:#F4F6FA;  /* light section base */
+  --paper-0:#FFFFFF;
+  --slate-600:#4A5D75; /* body text on paper */
+  --mist-300:#B0C0D4;  /* body text on navy */
+  --line-light:#DDE3EC;
+  --amber-500:#F5A623; /* CTA / price / focus ring only */
+  --amber-600:#DB8F0F; /* CTA hover */
+  --amber-700:#B97300; /* CTA pressed */
+  --amber-glow:rgba(245,166,35,.28);
+  --ok-500:#2E9E6B;    /* form/validation only, not decoration */
+  --err-500:#D64545;
+  --text-on-amber:#0E2138;
+
+  /* Semantic */
+  --bg:var(--paper-50); --bg-dark:var(--navy-800);
+  --fg:var(--navy-800); --fg-muted:var(--slate-600);
+  --fg-on-dark:#F4F6FA; --fg-muted-on-dark:var(--mist-300);
+
+  /* Type: Amharic-capable. One text family + one display accent (Latin/figures only). */
+  --font-am:"Noto Sans Ethiopic","Abyssinica SIL","Nyala",system-ui,sans-serif;
+  --font-am-display:"Noto Serif Ethiopic","Abyssinica SIL",serif; /* optional, H2 pull-quotes only */
+  --font-latin:"Archivo","Inter",system-ui,sans-serif;  /* EscaClaim wordmark, numerals, ETB */
+  --font-body:var(--font-am);
+  --font-head:var(--font-am);
+  /* Ge'ez needs more leading than Latin; never tighten below -0.01em */
+  --fw-regular:400; --fw-bold:700;
+  --fs-eyebrow:clamp(.75rem,.7rem + .2vw,.8125rem);
+  --fs-body:clamp(1rem,.96rem + .2vw,1.125rem);
+  --fs-lead:clamp(1.125rem,1.05rem + .4vw,1.375rem);
+  --fs-h3:clamp(1.25rem,1.1rem + .7vw,1.625rem);
+  --fs-h2:clamp(1.75rem,1.3rem + 2.2vw,3rem);
+  --fs-h1:clamp(2rem,1.4rem + 3.4vw,4.25rem);
+  --fs-price:clamp(2.5rem,2rem + 3vw,4.5rem);
+  --lh-body:1.7; --lh-head:1.22; --lh-tight:1.1;
+  --ls-head:-.01em; --ls-eyebrow:.14em;
+
+  /* Spacing (4px base) */
+  --s-1:4px; --s-2:8px; --s-3:12px; --s-4:16px; --s-5:24px; --s-6:32px;
+  --s-7:48px; --s-8:64px; --s-9:96px; --s-10:144px;
+  --section-y:clamp(72px,12vw,144px);
+  --gutter:clamp(20px,5vw,64px);
+  --container:1200px; --container-narrow:720px;
+  --grid-gap:clamp(12px,2vw,24px);
+
+  /* Radii: quiet, nearly square (savee) */
+  --r-0:0; --r-1:4px; --r-2:8px; --r-3:14px; --r-pill:999px;
+
+  /* Elevation: soft, never on text */
+  --shadow-1:0 1px 2px rgba(10,22,38,.08);
+  --shadow-2:0 12px 32px -12px rgba(10,22,38,.28);
+  --shadow-3:0 32px 64px -24px rgba(10,22,38,.45);
+
+  /* Motion */
+  --ease-out-expo:cubic-bezier(.16,1,.3,1);
+  --ease-in-out-expo:cubic-bezier(.87,0,.13,1);
+  --ease-in-out-cubic:cubic-bezier(.65,0,.35,1);
+  --d-micro:160ms; --d-fast:240ms; --d-base:480ms; --d-slow:800ms; --d-hero:1100ms;
+  --stagger:70ms; --reveal-y:24px;
+
+  /* Layout */
+  --header-h:64px; --sticky-cta-h:68px; --focus-ring:0 0 0 3px var(--ink-900),0 0 0 5px var(--amber-500);
+  --bp-sm:600px; --bp-md:900px; --bp-lg:1200px; /* use in @media (min-width) */
+  --reel-w:clamp(200px,62vw,280px); --reel-ratio:9/16;
+}
+
+/* ---- Reveal primitives ---- */
+.js .reveal{opacity:0;transform:translateY(var(--reveal-y));
+  transition:opacity var(--d-base) var(--ease-out-expo),transform var(--d-slow) var(--ease-out-expo);
+  transition-delay:calc(var(--i,0)*var(--stagger))}
+.js .reveal.is-in{opacity:1;transform:none}
+.js .mask-reveal{clip-path:inset(0 0 100% 0);transition:clip-path var(--d-slow) var(--ease-in-out-expo)}
+.js .mask-reveal.is-in{clip-path:inset(0)}
+
+/* ---- CTA button ---- */
+.btn-cta{font:700 var(--fs-body)/1 var(--font-am);min-height:56px;padding:0 var(--s-6);
+  background:var(--amber-500);color:var(--text-on-amber);border:0;border-radius:var(--r-pill);
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--s-3);cursor:pointer;
+  box-shadow:0 0 0 0 var(--amber-glow);
+  transition:background var(--d-fast) var(--ease-out-expo),transform var(--d-fast) var(--ease-out-expo),box-shadow var(--d-base) var(--ease-out-expo)}
+.btn-cta .arrow{transition:transform var(--d-fast) var(--ease-out-expo)}
+.btn-cta:hover{background:var(--amber-600);box-shadow:0 12px 32px -8px var(--amber-glow);transform:translateY(-2px)}
+.btn-cta:hover .arrow{transform:translateX(4px)}
+.btn-cta:active{background:var(--amber-700);transform:translateY(0) scale(.98);transition-duration:var(--d-micro)}
+.btn-cta:focus-visible{outline:0;box-shadow:var(--focus-ring)}
+.btn-cta[aria-busy="true"]{pointer-events:none;background:var(--amber-600)}
+.btn-cta[disabled]{background:var(--mist-300);color:var(--slate-600);cursor:not-allowed;box-shadow:none;transform:none}
+.btn-ghost{font:700 var(--fs-body)/1 var(--font-am);min-height:56px;padding:0 var(--s-5);background:transparent;
+  color:var(--fg-on-dark);border:1px solid var(--navy-600);border-radius:var(--r-pill);
+  transition:border-color var(--d-fast) var(--ease-out-expo),background var(--d-fast) var(--ease-out-expo)}
+.btn-ghost:hover{border-color:var(--mist-300);background:rgba(255,255,255,.05)}
+.btn-ghost:focus-visible{outline:0;box-shadow:var(--focus-ring)}
+
+/* ---- Reduced motion ---- */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;transition-delay:0ms!important;scroll-behavior:auto!important}
+  .reveal,.js .reveal{opacity:1;transform:none;transition:none}
+  .js .mask-reveal{clip-path:none}
+  .btn-cta:hover{transform:none}
+}

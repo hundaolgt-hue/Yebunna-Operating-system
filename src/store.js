@@ -24,6 +24,12 @@ export const state = {
   activity: [], // live feed of what bots are doing
   skillPacks: {}, // packId -> install status
   connections: {}, // service -> { enabled, config (secrets stay on this PC), bots, status }
+  usage: {}, // usage meter by day
+  rules: [], // team playbook learned in retrospectives
+  limit: null, // { since, resetAt, known } while paused on the Claude usage limit
+  telegram: { sent: [], offset: 0 }, // alerts sent (for matching replies) and the polling offset
+  lastRetroAt: null,
+  disk: null, // free space on the workspace drive
   settings: {
     approvePlans: false,
     approveDeliverables: false,
@@ -43,14 +49,30 @@ try {
 }
 
 let timer = null;
+let lastError = 0;
+export const saveStatus = { ok: true, error: null };
 export function save() {
   if (timer) return;
   timer = setTimeout(() => {
     timer = null;
-    fs.mkdirSync(DATA_DIR, { recursive: true });
     const tmp = `${FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(state));
-    fs.renameSync(tmp, FILE);
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(state));
+      fs.renameSync(tmp, FILE); // the old file stays intact until the new one is complete
+      saveStatus.ok = true;
+      saveStatus.error = null;
+    } catch (e) {
+      // Never crash the app over a failed save (e.g. the disk is full): keep running, retry.
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {}
+      saveStatus.ok = false;
+      saveStatus.error = e.code === 'ENOSPC' ? 'The disk is full — your latest changes are not saved yet.' : e.message;
+      if (Date.now() - lastError > 60_000) console.error(`Could not save data (${e.code || e.message}). Will retry.`);
+      lastError = Date.now();
+      setTimeout(save, 30_000).unref?.();
+    }
   }, 400);
 }
 

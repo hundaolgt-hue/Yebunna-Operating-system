@@ -10,6 +10,7 @@ import { demoStream } from './demo.js';
 import { WORKSPACE, state } from './store.js';
 import { connectionMcpServers, connectionRuntime } from './connections.js';
 import { recordUsage } from './usage.js';
+import { UsageLimitError, limited, hitLimit, parseReset } from './limits.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -49,6 +50,20 @@ const [BIN, BIN_ARGS, cliVersion] = (() => {
   return [null, [], null];
 })();
 const demoMode = !cliVersion;
+
+/** Run a Claude Code CLI command (e.g. `mcp list`) and return its output. */
+export function runCli(args, timeoutMs = 30_000) {
+  if (!BIN) return Promise.reject(new Error('Claude Code was not found on this computer (the app is in demo mode).'));
+  return new Promise((resolve, reject) => {
+    const child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: childEnv, windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    child.on('error', (e) => (clearTimeout(timer), reject(e)));
+    child.on('close', () => (clearTimeout(timer), resolve(out)));
+  });
+}
 
 /** Why Claude Code could not be started (empty when it was found). */
 export function detectionReport() {
@@ -179,25 +194,67 @@ export class OutOfStepsError extends Error {
  * agentId: which bot is running — picks its own browser profile for computer use.
  * demo:    function returning the scripted answer used in offline demo mode.
  */
-// Economy mode: lighter model and effort for each kind of work.
-const LIGHT_KINDS = new Set(['review', 'meeting', 'memory', 'skill']);
-function pick(kind, model, effort, maxTurns) {
-  if (!state.settings.economy) return { model: model || MODEL, effort, maxTurns };
+// Usage modes: which model, effort and step budget each kind of work gets.
+//   quality  — everything on your Claude Code default model (usually the biggest).
+//   balanced — the big model only for planning and large tasks; Sonnet for normal work,
+//              Haiku for yes/no reviews and notes. Small tasks get a small step budget.
+//   economy  — no big model at all.
+// [model, effort, steps]; null model = your default; steps scale up for computer use.
+const PROFILES = {
+  balanced: {
+    task: { small: ['sonnet', 'low', 40], medium: ['sonnet', 'medium', 80], large: [null, 'high', 100] },
+    plan: [null, 'high'],
+    report: ['sonnet', 'medium'],
+    chat: ['sonnet', 'medium'],
+    meeting: ['sonnet', 'low'],
+    skill: ['sonnet', 'medium'],
+    review: ['haiku', 'low'],
+    memory: ['haiku', 'low'],
+  },
+  economy: {
+    task: { small: ['haiku', 'low', 30], medium: ['sonnet', 'low', 50], large: ['sonnet', 'medium', 60] },
+    plan: ['sonnet', 'medium'],
+    report: ['haiku', 'low'],
+    chat: ['sonnet', 'low'],
+    meeting: ['haiku', 'low'],
+    skill: ['sonnet', 'low'],
+    review: ['haiku', 'low'],
+    memory: ['haiku', 'low'],
+  },
+};
+const EFFORT = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const usageMode = () => state.settings.usageMode || (state.settings.economy ? 'economy' : 'balanced');
+
+export function pick(kind, model, effort, maxTurns, size = 'medium') {
+  const profile = PROFILES[usageMode()];
+  if (!profile) return { model: model || (kind === 'task' && size === 'large' && state.settings.opusForLarge ? 'opus' : MODEL), effort, maxTurns };
+  // "Opus for large tasks": heavy work gets Opus at full effort whatever the mode.
+  if (kind === 'task' && size === 'large' && state.settings.opusForLarge) return { model: model || 'opus', effort, maxTurns };
+  const p = kind === 'task' ? profile.task[size] || profile.task.medium : profile[kind];
+  if (!p) return { model: model || MODEL, effort, maxTurns };
+  const [m, e, steps] = p;
   return {
-    model: model || (LIGHT_KINDS.has(kind) ? 'haiku' : 'sonnet'),
-    effort: ['high', 'xhigh', 'max'].includes(effort) ? 'medium' : effort,
-    maxTurns: Math.min(maxTurns, 60),
+    model: model || m || MODEL,
+    // Never raise effort above what the caller asked for.
+    effort: EFFORT[Math.min(EFFORT.indexOf(effort), EFFORT.indexOf(e))] || e,
+    maxTurns: steps ? Math.round((steps * maxTurns) / 100) : maxTurns,
   };
 }
 
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', signal, demo }) {
-  ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns));
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo }) {
+  ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size));
   if (demoMode) {
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;
   }
 
+  // Paused on the plan's usage limit: don't spend a run finding that out again.
+  if (limited()) throw new UsageLimitError(state.limit.kind === 'disk' ? 'Paused: the disk is almost full. Free some space and work resumes by itself.' : `Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
   await acquire(signal);
+  if (limited()) {
+    releaseSlot();
+    throw new UsageLimitError('Paused until your Claude usage limit resets.', state.limit.resetAt);
+  }
   // Instructions go in a file: Windows caps a command line at ~32k characters.
   const promptFile = path.join(os.tmpdir(), `yebunna-sys-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
   fs.writeFileSync(promptFile, system);
@@ -291,17 +348,27 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
 
   const code = await exited;
-  if (result) recordUsage({ agentId, kind, usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns });
+  if (result) recordUsage({ agentId, kind, model: mainModel(result.modelUsage) || model || MODEL || 'default', usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns });
   if (signal?.aborted) throw new Error('aborted');
   if (timedOut) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`);
   if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);
+  // Sometimes the limit notice comes back as the "answer" instead of an error.
+  if (!result?.is_error && /^(claude ai usage limit reached|you've hit your limit|\d+-hour limit reached)/i.test(String(result?.result || lastText).trim())) {
+    result = { ...result, is_error: true, result: result?.result || lastText };
+  }
   if (result?.is_error || (code !== 0 && !result)) {
     const why = String(result?.result || stderr.trim() || `claude exited with code ${code}`);
     if (/not logged in|please run \/login|invalid api key|authentication_error|oauth token|\/login/i.test(why)) {
       throw new Error('Claude Code is not logged in. In cmd run `claude`, type /login, choose your Claude account (Pro/Max subscription), finish in the browser, type /exit, then try again.');
     }
-    if (/usage limit|rate limit|limit reached|overloaded|429/i.test(why)) {
-      throw new Error(`Your Claude plan's usage limit was reached or Claude is busy — try again later. (${why.slice(0, 200)})`);
+    const all = `${why}\n${lastText}\n${stderr}`;
+    if (/usage limit|limit reached|hit your limit|limit will reset|resets? \d/i.test(all)) {
+      const resetAt = parseReset(all);
+      hitLimit(why, resetAt);
+      throw new UsageLimitError(`Your Claude usage limit was reached — work pauses and resumes automatically${resetAt ? ` at ${new Date(resetAt).toLocaleString()}` : ''}.`, resetAt);
+    }
+    if (/rate limit|overloaded|429|529/i.test(why)) {
+      throw new Error(`Claude is busy right now (rate limited) — try again in a few minutes. (${why.slice(0, 200)})`);
     }
     throw new Error(`Claude Code: ${why.slice(0, 400)}`);
   }
@@ -311,6 +378,11 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
  * Run a completion to the end, forwarding stream events. Returns the bot's final
  * answer — the text of its last step, not the "working out loud" before tool calls.
  */
+/** The model that did most of a run's writing (Claude Code may also use a small one for housekeeping). */
+function mainModel(usage = {}) {
+  return Object.entries(usage).sort((a, b) => (b[1].outputTokens || 0) - (a[1].outputTokens || 0))[0]?.[0];
+}
+
 export async function complete(opts, onEvent) {
   let text = '';
   for await (const ev of streamChat(opts)) {

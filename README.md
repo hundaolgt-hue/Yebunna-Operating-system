@@ -13,6 +13,8 @@ An AI company that runs on your **Claude subscription**. You give the CEO a goal
 | **Orion** | Product Manager | PRDs, MVP scoping, roadmaps, user stories | |
 | **Forge** | Lead Engineer | Architecture, full-stack code, automation | |
 | **Pixel** | Brand & UX Designer | Brand identity, UI/UX flows, design systems | |
+| **Vega** | Creative Director | Creative concepts, ad creatives, AI images & video (Higgsfield) | 🌐 |
+| **Lumen** | Landing Page & Conversion Lead | Amharic-first landing pages with the ad and tutorial videos, every CTA to the Ye-Buna checkout, Meta Pixel, Vercel | 🌐 |
 | **Echo** | Growth Marketer | Copywriting, launch plans, SEO, social & ads | 🌐 |
 | **Ledger** | Revenue & Finance Lead | Pricing, unit economics, financial models | 🌐 |
 | **Harbor** | Customer Success Lead | Onboarding, help docs, email sequences | |
@@ -46,8 +48,14 @@ Agents marked 🌐 can search and read the web while they work, like Grok's real
 | **Live web search** | Nova, Echo, Ledger, and any bot you create with "web" turned on, use WebSearch and WebFetch. |
 | **Create your own bots** | **Team → Create a bot:** pick a preset or write a name, main job, description and specialties. |
 | **Direct assignments** | **Assign task** on any bot, with a deadline and an optional skill. No CEO planning step. |
-| **Connections** | **Connections** page. Each service has setup steps, a **Save & test** button, and a choice of which bots may use it. **GitHub** uses GitHub's official MCP server with a personal access token. **Vercel** uses the Vercel CLI with `VERCEL_TOKEN` (preview deploys by default). **Meta (Facebook & Instagram)** uses the Graph and Marketing API with a system-user token; ads are created PAUSED, and nothing spends money or publishes unless the task says so. **Google Drive** works through the folder that *Google Drive for desktop* syncs to your PC. Tokens stay in `data/state.json` on your PC. They are never sent to the browser or written to files, and are passed only to the runs of bots you allowed. |
-| **Usage & Economy mode** | **Settings → Usage** shows runs, tokens and an approximate API-equivalent cost per bot and per kind of work. **Economy mode** runs bot work on Sonnet and small jobs on Haiku, with lower effort. |
+| **Connections** | **Connections** page. Each service has setup steps, a **Save & test** button, and a choice of which bots may use it. **GitHub** uses GitHub's official MCP server with a personal access token. **Vercel** uses the Vercel CLI with `VERCEL_TOKEN` (preview deploys by default). **Meta (Facebook & Instagram)** uses the Graph and Marketing API with a system-user token; ads are created PAUSED, and nothing spends money or publishes unless the task says so. **Higgsfield** uses Higgsfield's MCP server (`https://mcp.higgsfield.ai/mcp`) for AI images and video, given to Vega, the Creative Director, by default. It signs in with OAuth, so there is no token to paste: run `claude mcp add --transport http --scope user higgsfield https://mcp.higgsfield.ai/mcp` once, log in under `/mcp` in Claude Code, and bot runs reuse that login. Bots check your credits first and never buy credits or post anything unless the task says so. **Google Drive** works through the folder that *Google Drive for desktop* syncs to your PC. Tokens stay in `data/state.json` on your PC. They are never sent to the browser or written to files, and are passed only to the runs of bots you allowed. |
+| **Blockers → CEO → you** | A bot that can't get past something (missing access, a login, a decision, a tool that keeps failing) ends its work with `BLOCKED: … \| NEED: …`. Failed runs count as blockers too. The CEO then tells the bot how to get past it, hands the task to a teammate who has the access, or, only when nobody on the team can, asks you. Your question shows on the task card (**🙋 Needs you**) and on Telegram. Your answer sends the task back to work. |
+| **Telegram: chat with the CEO** | **Connections → Telegram:** make a bot with @BotFather, paste its token, press Start in the bot, then click **Save & test** (your chat is found automatically). Then talk to the CEO there by text or voice note, in the same conversation as the CEO chat in the app. The CEO answers questions (it can read the team's files) and acts: new work becomes a mission, instructions and comments go to the right running mission, "from now on…" becomes a playbook rule, and it can answer or approve what is waiting on you. Voice notes are transcribed first: paste a free Groq API key (console.groq.com) or an OpenAI key in the connection, or install `faster-whisper` to transcribe on your PC. The app sends back what it heard so you can check. You also get alerts when something only you can do blocks a mission, when a plan or deliverable needs your OK, when the usage limit pauses or resumes work, and when a mission finishes. Reply to an alert to answer it; reply to "mission complete" to comment on that mission. `/status`, `/answer <n> <text>` and `/resume` also work. Only your own chat is accepted. |
+| **Usage-limit auto-resume** | When a run hits your Claude usage limit, everything pauses: running tasks, CEO reviews, plans, reports and meetings go back in the queue, nothing new starts, and no runs are wasted. One timer wakes the team at the reset time Claude Code reports (plus 90 seconds). If no time is reported, it tries again every 2 hours (`LIMIT_CHECK_HOURS`). A banner shows the pause, with **Try now**. It survives restarts. |
+| **Morning retrospective & playbook** | Every morning at 08:00 (a routine you can change), the bots that worked since the last retrospective meet. Each reports what went well, what went wrong and why, and proposes a rule. The CEO turns lessons into **DO** / **DON'T** rules in the **team playbook** and retires rules that stopped helping. Every bot follows the playbook in every task. If nothing happened since the last retrospective, the meeting is skipped and uses nothing. Edit the playbook on the **Meetings** page. |
+| **House standards** | Standing rules the founder set, written as skills that are always included in full for the bots they apply to. Edit them in **Skills**; your edits are never overwritten. **House creative standards** (Pixel, Vega, Lumen): Fortune-500 launch-ad quality; motion references motionin.design and Motion Array (pacing and transitions only, no unlicensed assets); aesthetic reference savee.com; Facebook/Instagram ad sizes (images 1:1, 4:5 and 9:16; videos vertical only, 9:16 1080×1920 plus a 4:5 Feed cut, with safe zones); Amharic on-screen text added as an overlay (AI models garble Ge'ez); no voiceover, only sound effects and royalty-safe classical music; ffprobe/frame checks before hand-in. **Ye-Buna landing page standard** (Lumen): page structure, every buy button to the product's Ye-Buna checkout (Lumen asks you if it doesn't have the link), Pixel events, Vercel preview deploy, and checks at mobile and desktop widths. |
+| **Disk space guard** | A full disk can no longer crash the app: a failed save is retried, and your data file stays intact. The free space on the workspace drive is checked every 3 minutes. Below 5 GB (`DISK_WARN_GB`) you get a warning in the app and on Telegram. Below 1 GB (`DISK_PAUSE_GB`) the team pauses like on the usage limit and resumes by itself once there is room. **Settings → Storage** shows free space, the size of each mission folder, browser profiles and skill packs, and the largest files. Bots delete render frames and temporary files when they finish. |
+| **Usage modes** | **Settings → Usage** shows runs, tokens and an approximate API-equivalent cost per bot, per kind of work and per model. The CEO sizes every task *small*, *medium* or *large* (you pick the size when you assign directly). **Balanced** (default): your default model only plans missions and does large tasks; medium tasks, chats, meetings and reports use Sonnet; small tasks use Sonnet with low effort and a small step budget; CEO reviews and memory notes use Haiku. **Quality** runs everything on your default model. **Economy** never uses the big model. **Opus for large tasks** (a switch next to it) sends large tasks to Opus at full effort in any mode, e.g. Economy for everything else and Opus for the heavy work. Deadlines only set the order of work; they don't make a bot spend more. |
 | **Voice** | 🎙 dictation in every message box and 🔊 read-aloud on replies, using the browser's speech features (Chrome or Edge). |
 
 One Grok Bot feature isn't included:
@@ -74,6 +82,8 @@ cp .env.example .env                       # optional settings
 npm start                                  # → http://localhost:3000
 ```
 
+Run `npm test` for an end-to-end smoke test: it starts the server in demo mode with throwaway folders and drives missions, plan approval, chat, bots, meetings, skills and routines through the API (about 2 minutes).
+
 There are no npm dependencies. If the `claude` CLI isn't found, or `DEMO_MODE=1` is set, the app runs an offline scripted demo so you can explore the UI.
 
 ### How it uses your subscription
@@ -96,6 +106,10 @@ This setup is for your own use on your own machine. Anthropic doesn't allow offe
 | `RUN_TIMEOUT_MINUTES` | `45` | Longest a single bot run may take before it is stopped |
 | `DATA_DIR` | `./data` | Where missions, memory, skills and routines are saved (`state.json`) |
 | `WORKSPACE_DIR` | `./workspace` | The shared folder bots work in |
+| `META_API_VERSION` | `v26.0` | Graph / Marketing API version for the Meta connection (the test switches to a newer one if Meta asks) |
+| `LIMIT_CHECK_HOURS` | `2` | After a usage-limit pause with no reset time, how often to try again |
+| `RETRO_TIME` | `08:00` | Time of the morning retrospective created on first start |
+| `SKILL_PACKS` | `1` | `0` skips downloading skill packs at startup (offline use, tests) |
 
 ## Project layout
 
@@ -105,12 +119,17 @@ src/agents.js        the team: personas, custom bots, tools, memory, system prom
 src/orchestrator.js  CEO loop: plan → approve → delegate → run → review → report, watchdog, memory
 src/meetings.js      team meetings & standups → minutes → action items
 src/skills.js        skills, save-as-skill, watch-and-learn teaching
-src/routines.js      schedules and event triggers
+src/routines.js      schedules and event triggers (incl. the morning retrospective)
+src/limits.js        usage-limit pause and automatic resume
+src/telegram.js      Telegram: alerts, replies, voice-note transcription
+src/ceochat.js       the founder's conversation with the CEO (Telegram), with actions
+src/playbook.js      team rules learned in retrospectives
 src/skillpacks.js    downloads skill packs (git) and assigns them to bots
 src/activity.js      live activity feed
 src/llm.js           Claude Code bridge (headless `claude -p`, streamed)
 src/demo.js          offline demo engine
 src/store.js         JSON persistence (missions survive restarts and resume)
+test/smoke.test.js   end-to-end API test in demo mode (`npm test`)
 public/              the UI (vanilla JS modules, no build step)
 ```
 

@@ -20,14 +20,14 @@ export const PACKS = [
     repo: 'Leonxlnx/taste-skill',
     label: 'Taste Skill — anti-slop frontend design',
     include: ['design-taste-frontend'],
-    owners: () => ['design', 'engineer'],
+    owners: () => ['design', 'engineer', 'landing'],
   },
   {
     id: 'awwwards',
     repo: 'MengTo/Skills',
     label: 'Build Awwwards-quality sites',
     include: ['build-awwwards-quality-sites'],
-    owners: () => ['design', 'engineer'],
+    owners: () => ['design', 'engineer', 'landing'],
   },
   {
     id: 'find-skills',
@@ -48,6 +48,8 @@ export const PACKS = [
       product: ['product-marketing', 'onboarding', 'signup', 'paywalls', 'ab-testing', 'cro', 'churn-prevention'],
       support: ['onboarding', 'churn-prevention', 'emails', 'sms', 'community-marketing'],
       design: ['cro', 'popups', 'image', 'video', 'ad-creative', 'site-architecture', 'signup'],
+      creative: ['image', 'video', 'ad-creative'],
+      landing: ['cro', 'signup', 'site-architecture', 'analytics', 'ab-testing'],
       engineer: ['schema', 'programmatic-seo', 'free-tools', 'analytics', 'site-architecture', 'ai-seo', 'seo-audit'],
       ceo: ['marketing-plan', 'marketing-council', 'launch'],
     }),
@@ -60,6 +62,7 @@ export const PACKS = [
     owners: by({
       marketing: '*',
       design: ['graphic-designer', 'youtube-thumbnail', 'gemini-carousel', 'gemini-infographic'],
+      creative: ['graphic-designer', 'youtube-thumbnail', 'gemini-carousel'],
       research: ['niche-research', 'analytics-dashboard', 'post-scorer'],
     }),
   },
@@ -87,6 +90,7 @@ export const PACKS = [
       product: ['spec-driven-development', 'planning-and-task-breakdown', 'idea-refine', 'interview-me', 'documentation-and-adrs'],
       ceo: ['planning-and-task-breakdown', 'idea-refine'],
       design: ['frontend-ui-engineering'],
+      landing: ['frontend-ui-engineering', 'performance-optimization', 'browser-testing-with-devtools'],
       support: ['documentation-and-adrs'],
     }),
   },
@@ -203,4 +207,13 @@ export function installAll({ onlyMissing = false } = {}) {
     }
   })().finally(() => (installing = null));
   return installing;
+}
+
+/** New bots and changed defaults reach skills that are already installed (unless the founder picked the bots). */
+export function refreshPackOwners() {
+  for (const s of Object.values(state.skills)) {
+    const pack = s.pack && PACKS.find((p) => p.id === s.pack);
+    if (pack && !s.ownersEdited) s.agentIds = pack.owners(s.name);
+  }
+  save();
 }

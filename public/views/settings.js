@@ -3,6 +3,7 @@ import { S, $$, api, esc, view, toast, Recognition } from '../core.js';
 export function renderSettings() {
   const p = S.provider || {};
   const st = S.settings;
+  const mode = st.usageMode || (st.economy ? 'economy' : 'balanced');
   view().innerHTML = `<div class="page narrow">
     <div class="page-head"><h2>Settings</h2></div>
     <section class="settings">
@@ -28,14 +29,22 @@ export function renderSettings() {
     <section class="settings">
       <h3>Usage</h3>
       <p class="side-text">Bots run on your Claude plan, so their work counts toward the same limits as your own chats. Every mission is many separate runs (plan, each task, each review, memory notes, the report). This shows where your usage goes.</p>
-      <label class="setting"><span><b>Economy mode</b><small>Bots use Sonnet for work and Haiku for reviews, meetings and notes, with lower thinking effort. Uses far less of your limit; quality stays good for most business tasks.</small></span>
-        <label class="switch"><input type="checkbox" data-set="economy" ${st.economy ? 'checked' : ''}/><span></span></label></label>
+      <label class="setting"><span><b>Usage mode</b><small>${esc(MODES[mode][1])}</small></span>
+        <select class="select-sm" data-usage-mode>${Object.entries(MODES).map(([v, [l]]) => `<option value="${v}" ${mode === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="setting"><span><b>Opus for large tasks</b><small>Large tasks (code, spreadsheet models, deep research, long browser work) always run on Opus at full effort, whatever the usage mode — e.g. Economy for everything else, Opus for the heavy work. Pick “Large” when you assign a task yourself to send it to Opus.</small></span>
+        <label class="switch"><input type="checkbox" data-set="opusForLarge" ${st.opusForLarge ? 'checked' : ''}/><span></span></label></label>
+      <p class="faint small">The CEO sizes every task small, medium or large. The deadline only sets the order work is done in; it never makes a bot work longer or use more.</p>
       ${usageTable()}
+    </section>
+    <section class="settings">
+      <h3>Storage</h3>
+      <p class="side-text">Bots save their work, renders and browser profiles in the workspace folder on this PC. If the disk gets nearly full, the team pauses by itself and resumes when there is room again.</p>
+      <div data-storage><p class="faint small">Measuring…</p></div>
     </section>
     <section class="settings">
       <h3>Engine</h3>
       <div class="kv"><span>Running on</span><b>${p.name === 'demo' ? 'Offline demo (Claude Code not found)' : `Claude via Claude Code ${esc(p.cli || '')}`}</b></div>
-      <div class="kv"><span>Model</span><b>${st.economy ? 'Economy: Sonnet + Haiku' : esc(p.model === 'default' ? 'Your Claude Code default' : p.model || '')}</b></div>
+      <div class="kv"><span>Model</span><b>${esc(MODES[mode][0])}${mode !== 'economy' ? ` · big model: ${esc(p.model === 'default' ? 'your Claude Code default' : p.model || '')}` : ''}</b></div>
       <div class="kv"><span>Billing</span><b>${p.name === 'demo' ? '—' : 'Your Claude subscription (no API key)'}</b></div>
       <div class="kv"><span>Workspace</span><code>${esc(S.workspace)}</code></div>
       <p class="faint small">Change the model or parallelism in the <code>.env</code> file (see README) and restart.</p>
@@ -46,12 +55,14 @@ export function renderSettings() {
       <div class="kv"><span>Read aloud (🔊 on replies)</span><b>${'speechSynthesis' in window ? 'Available' : 'Not supported'}</b></div>
     </section>
   </div>`;
+  loadStorage();
   const put = (body) =>
     api('/api/settings', { method: 'PUT', body })
       .then((s) => ((S.settings = s), toast('Saved.')))
       .catch((e) => toast(e.message));
   $$('[data-set-inv]').forEach((el) => el.addEventListener('change', () => put({ [el.dataset.setInv]: !el.checked })));
   $$('[data-browser]').forEach((el) => el.addEventListener('change', () => put({ browser: el.value })));
+  $$('[data-usage-mode]').forEach((el) => el.addEventListener('change', () => put({ usageMode: el.value }).then(renderSettings)));
   $$('[data-computer]').forEach((b) =>
     b.addEventListener('click', () =>
       api('/api/agents/computer', { method: 'POST', body: { enabled: b.dataset.computer === '1' } })
@@ -67,6 +78,12 @@ export function renderSettings() {
     ),
   );
 }
+
+const MODES = {
+  balanced: ['Balanced (recommended)', 'Your big model only plans missions and does large tasks. Normal tasks, chats, meetings and reports use Sonnet; CEO reviews and memory notes use Haiku. Small tasks get a small step budget.'],
+  quality: ['Quality', 'Everything runs on your Claude Code default model at full effort. Best results, uses your limit fastest.'],
+  economy: ['Economy', 'No big model: Sonnet for most work, Haiku for small tasks, reviews, meetings and notes, with low effort. Uses the least.'],
+};
 
 const n = (x) => (x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x || 0));
 const KIND = { task: 'Tasks', chat: 'Chats', plan: 'CEO planning', review: 'CEO reviews', report: 'Reports', meeting: 'Meetings', memory: 'Memory notes', skill: 'Skills', other: 'Other' };
@@ -86,8 +103,28 @@ function usageTable() {
   const head = '<tr><th></th><th class="num">runs</th><th class="num">steps</th><th class="num">read</th><th class="num">written</th><th class="num">≈ API $</th></tr>';
   return `<div class="kv"><span>Today</span><b>${today ? `${today.runs} runs · ${n(today.output)} tokens written · ≈ $${(today.cost || 0).toFixed(2)} API-equivalent` : '—'}</b></div>
     <div class="kv"><span>Last 7 days</span><b>${week.runs} runs · ${n(week.output)} tokens written · ≈ $${week.cost.toFixed(2)}</b></div>
-    ${today ? `<details><summary class="faint small" style="cursor:pointer;margin-top:8px">Today by bot and by kind of work</summary>
+    ${today ? `<details><summary class="faint small" style="cursor:pointer;margin-top:8px">Today by bot, by kind of work and by model</summary>
       <table class="usage-table">${head}${rows(today.byBot, (id) => S.agentById[id]?.name || id)}</table>
       <table class="usage-table">${head}${rows(today.byKind, (k) => KIND[k] || k)}</table>
+      ${today.byModel ? `<table class="usage-table">${head}${rows(today.byModel, (k) => k)}</table>` : ''}
       <p class="faint small">“≈ API $” is what the same work would cost on the pay-per-use API — not a charge on your plan, just a relative measure of how much limit each part uses.</p></details>` : ''}`;
+}
+
+const size = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : b >= 1024 ** 2 ? `${Math.round(b / 1024 ** 2)} MB` : `${Math.round(b / 1024)} KB`);
+const WHAT = { '.browser': 'browser profiles of bots with computer use', '.skills': 'downloaded skill packs' };
+
+async function loadStorage() {
+  const box = document.querySelector('[data-storage]');
+  if (!box) return;
+  try {
+    const r = await api('/api/storage');
+    const d = r.disk;
+    box.innerHTML = `${d ? `<div class="kv"><span>Free on this drive</span><b style="color:${d.status === 'ok' ? 'inherit' : 'var(--bad)'}">${size(d.free)} of ${size(d.total)}</b></div>` : ''}
+      <div class="kv"><span>Workspace</span><code>${esc(r.workspace)}</code></div>
+      ${r.folders.length ? `<table class="usage-table"><tr><th>Folder</th><th class="num">size</th></tr>${r.folders.map((f) => `<tr><td>${esc(f.name)}${WHAT[f.name] ? ` <span class="faint">— ${WHAT[f.name]}</span>` : ''}</td><td class="num">${size(f.size)}</td></tr>`).join('')}</table>` : ''}
+      ${r.largest.length ? `<details><summary class="faint small" style="cursor:pointer;margin-top:8px">Largest files</summary><table class="usage-table">${r.largest.map((f) => `<tr><td><a class="link" href="#/files?f=${encodeURIComponent(f.path)}">${esc(f.path)}</a></td><td class="num">${size(f.size)}</td></tr>`).join('')}</table></details>` : ''}
+      <p class="faint small">To free space, delete old mission folders or large files you don't need (in File Explorer, inside the workspace folder above), or empty Windows' temp files (Settings → System → Storage → Temporary files).</p>`;
+  } catch (e) {
+    box.innerHTML = `<p class="faint small">${esc(e.message)}</p>`;
+  }
 }

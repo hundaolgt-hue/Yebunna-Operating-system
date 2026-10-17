@@ -19,10 +19,17 @@ import {
   resumeAll,
   approvePlan,
   decideTask,
+  answerTask,
 } from './src/orchestrator.js';
+import { addRule, removeRule, listRules } from './src/playbook.js';
+import { resume as resumeAfterLimit } from './src/limits.js';
+import { startRetro } from './src/meetings.js';
+import './src/telegram.js';
+import { seedHouseSkills } from './src/house.js';
+import { storageReport } from './src/disk.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
-import { listPacks, installPack, installAll } from './src/skillpacks.js';
+import { listPacks, installPack, installAll, refreshPackOwners } from './src/skillpacks.js';
 import { listConnections, saveConnection, removeConnection, testConnection } from './src/connections.js';
 import { logActivity, toolTracker } from './src/activity.js';
 import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
@@ -133,6 +140,9 @@ const routes = {
       packs: listPacks(),
       connections: listConnections(),
       usage: state.usage || null,
+      rules: listRules(),
+      limit: state.limit,
+      disk: state.disk,
     }),
 
   'GET /api/events': (req, res) => {
@@ -149,8 +159,12 @@ const routes = {
   'GET /api/settings': (req, res) => send(res, 200, state.settings),
   'PUT /api/settings': async (req, res) => {
     const body = await readBody(req);
-    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless', 'economy']) if (k in body) state.settings[k] = Boolean(body[k]);
+    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless', 'economy', 'opusForLarge']) if (k in body) state.settings[k] = Boolean(body[k]);
     if (['chrome', 'msedge', 'firefox'].includes(body.browser)) state.settings.browser = body.browser;
+    if (['quality', 'balanced', 'economy'].includes(body.usageMode)) {
+      state.settings.usageMode = body.usageMode;
+      state.settings.economy = body.usageMode === 'economy';
+    }
     save();
     bus.emit('event', { type: 'settings', settings: state.settings });
     send(res, 200, state.settings);
@@ -189,6 +203,14 @@ const routes = {
     const { approve, feedback } = await readBody(req);
     need(t.status === 'approval', 409, 'This task is not waiting for your approval.');
     decideTask(t, { approve: Boolean(approve), feedback });
+    send(res, 200, { ok: true });
+  },
+  'POST /api/tasks/:id/answer': async (req, res, { id }) => {
+    const t = get('tasks', id, 'task');
+    const { text } = await readBody(req);
+    need(text?.trim(), 400, 'Write your answer.');
+    need(t.status === 'founder', 409, 'This task is not waiting for you.');
+    answerTask(t, text.trim());
     send(res, 200, { ok: true });
   },
   'POST /api/tasks/:id/skill': (req, res, { id }) => {
@@ -274,7 +296,7 @@ const routes = {
   'POST /api/agents/:id/assign': async (req, res, { id }) => {
     const agent = getAgent(id);
     need(agent && id !== 'ceo', 404, 'Pick a bot to assign to (the CEO delegates missions instead).');
-    const { title, instructions, deadlineHours = 4, skillId } = await readBody(req);
+    const { title, instructions, deadlineHours = 4, skillId, size } = await readBody(req);
     need(title?.trim(), 400, 'title is required');
     const hours = Math.max(0.1, Number(deadlineHours) || 4);
     send(
@@ -283,7 +305,7 @@ const routes = {
       createMissionWithTasks({
         goal: title.trim(),
         deadline: new Date(Date.now() + hours * 36e5).toISOString(),
-        specs: [{ agent: id, title: title.trim(), brief: instructions || title, deliverable: 'The finished work', due_in_hours: hours, skillId }],
+        specs: [{ agent: id, title: title.trim(), brief: instructions || title, deliverable: 'The finished work', due_in_hours: hours, skillId, size }],
         intro: `Assigned directly to **${agent.name}** — due in ${hours}h.`,
       }),
     );
@@ -363,7 +385,7 @@ just answer (you may read the team's files) — no block.`
           reply.content = '';
         } else if (ev.type === 'text') reply.content += ev.text;
         else {
-          reply.reasoning += ev.text;
+          if (reply.reasoning.length < 50_000) reply.reasoning += ev.text;
           track(ev.text);
         }
         write(ev);
@@ -423,6 +445,34 @@ just answer (you may read the team's files) — no block.`
   },
   'DELETE /api/meetings/:id': (req, res, { id }) => {
     deleteMeeting(get('meetings', id, 'meeting'));
+    send(res, 200, { ok: true });
+  },
+
+  'POST /api/retro': (req, res) => {
+    const mt = startRetro();
+    need(mt, 409, 'Nothing new to review since the last retrospective.');
+    send(res, 201, mt);
+  },
+
+  // ---- team playbook (rules from retrospectives) ----
+  'POST /api/rules': async (req, res) => {
+    const body = await readBody(req);
+    try {
+      send(res, 201, addRule({ ...body, source: 'founder' }) || { duplicate: true });
+    } catch (e) {
+      throw new HttpError(400, e.message);
+    }
+  },
+  'DELETE /api/rules/:id': (req, res, { id }) => {
+    removeRule(id);
+    send(res, 200, { ok: true });
+  },
+
+  'GET /api/storage': (req, res) => send(res, 200, storageReport()),
+
+  // ---- usage limit ----
+  'POST /api/limit/resume': (req, res) => {
+    resumeAfterLimit('founder asked');
     send(res, 200, { ok: true });
   },
 
@@ -575,11 +625,13 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+seedHouseSkills();
+refreshPackOwners();
 resumeAll();
 resumeMeetings();
 if (allAgents().some((a) => a.computer)) warmBrowser();
 // Download any skill packs that aren't installed yet (needs git and internet; runs in the background).
-installAll({ onlyMissing: true }).catch(() => {});
+if (process.env.SKILL_PACKS !== '0') installAll({ onlyMissing: true }).catch(() => {});
 server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);

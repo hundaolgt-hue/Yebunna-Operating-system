@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="am">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EscaClaim · የዋጋ ማስተካከያ ጥያቄ ማስያ</title>
+<meta name="description" content="EscaClaim፦ ለእያንዳንዱ የክፍያ ሰርተፊኬት (IPC) የዋጋ ማስተካከያውን ያሰላል፣ በ19 ፍተሻዎች ያረጋግጣል፣ ለፊርማ ዝግጁ ማጠቃለያና የሽፋን ደብዳቤ ያትማል።">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0E1A2B">
+<meta property="og:type" content="website">
+<meta property="og:title" content="EscaClaim · የዋጋ ማስተካከያ ጥያቄ ማስያ">
+<meta property="og:description" content="የሚገባዎን በትክክል ይጠይቁ። በExcel እና በGoogle Sheets የሚሰራ ማስያ።">
+<meta property="og:image" content="assets/img/og-escaclaim-1200x1200.jpg">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/ethiopic-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/ethiopic-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.classList.add('js')</script>
+<script src="config.js"></script>
+</head>
+<body>
+
+<p class="ribbon" id="ribbon" hidden>ረቂቅ ገጽ፦ የክፍያ ሊንኩ ገና አልተገናኘም።</p>
+
+<header class="bar">
+  <a class="wordmark" href="#top" aria-label="EscaClaim">EscaClaim</a>
+  <nav class="bar-links" aria-label="ዋና">
+    <a href="#how">እንዴት ይሰራል</a>
+    <a href="#inside">በውስጡ</a>
+    <a href="#faq">ጥያቄዎች</a>
+  </nav>
+  <a class="btn btn-sm" data-cta="nav" href="#offer">ይዘዙ</a>
+</header>
+
+<main id="top">
+
+  <!-- HERO: Kit-led headline (Echo variant, set in config.js), the 9:16 video, one action -->
+  <section class="hero" id="hero">
+    <div class="hero-copy">
+      <h1 class="r" id="hero-title" data-variant="B">ያልተከፈለዎትን ገንዘብ በኪቱ ያስመልሱ</h1>
+      <p class="hero-sub r" id="hero-sub">EscaClaim የኮንትራክተር ሙሉ ኪት፦ የሚገባዎትን ክፍያ በትክክለኛ ስሌት ጠይቀው ያስመልሱ።</p>
+      <div class="hero-action r">
+        <a class="btn" data-cta="hero" href="#offer"><span>ዛሬውኑ ይዘዙ</span><span class="btn-price" data-price>2,500 ብር</span></a>
+        <p class="avail" data-when="solo">አሁን የሚገኘው፦ የዋጋ ማስተካከያ ጥያቄ ማስያው። ሙሉ ኪቱ በቅርቡ።</p>
+        <p class="avail" data-when="kit" hidden>አራት መሣሪያዎች ያሉት ሙሉ ኪት።</p>
+      </div>
+    </div>
+
+    <figure class="phone-frame r" id="hero-video" data-video="60" aria-label="EscaClaim ቪዲዮ (60 ሰከንድ)">
+      <div class="slot" data-slot>
+        <img class="slot-sheet" src="assets/img/claim-summary-640.webp"
+             srcset="assets/img/claim-summary-640.webp 640w, assets/img/claim-summary-1200.webp 1200w"
+             sizes="(min-width: 960px) 360px, 80vw" width="640" height="800"
+             alt="የEscaClaim የጥያቄ ማጠቃለያ ሉህ፦ READY TO PRINT፣ የተጣራ ጥያቄ 739,445.60 ብር (ምሳሌ)" fetchpriority="high">
+        <p class="slot-tag"><strong>ቪዲዮ በዝግጅት ላይ</strong><span>VIDEO SLOT · 60s · 9:16 · PENDING</span></p>
+      </div>
+    </figure>
+  </section>
+
+  <!-- PROBLEM -> OUTCOME -->
+  <section class="band band-paper" id="why">
+    <div class="wrap">
+      <h2 class="r">ዋጋ ሲጨምር የመጠየቅ መብት አለዎት።</h2>
+      <p class="lede r">የሲሚንቶና የብረት ዋጋ ሲጨምር፣ ውልዎ የዋጋ ማስተካከያ እንዲጠይቁ ይፈቅድልዎታል። ችግሩ ስሌቱ ነው።</p>
+      <ul class="pains">
+        <li class="r">በእጅ የሚሰራ ስሌት ስህተት ይፈጥራል።</li>
+        <li class="r">ጥያቄው ይመለሳል፣ ክፍያው ይዘገያል።</li>
+        <li class="r">አንዳንዴም ከሚገባዎ ያነሰ ይጠይቃሉ።</li>
+      </ul>
+      <p class="answer r">መፍትሄው EscaClaim ነው፦ በExcel እና በGoogle Sheets የሚሰራ የዋጋ ማስተካከያ ጥያቄ ማስያ።</p>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS: 30s cut + 3 steps -->
+  <section class="band band-navy" id="how">
+    <div class="wrap how">
+      <div class="how-copy">
+        <h2 class="r">ከውል መረጃ እስከ ታተመ ጥያቄ</h2>
+        <ol class="steps">
+          <li class="r"><strong>የውልዎን መረጃና የቀመሩን ኮፊሸንቶች ያስገቡ።</strong><span>ድምራቸው 1.0000 መሆኑን ማስያው ያረጋግጣል።</span></li>
+          <li class="r"><strong>የዋጋ ኢንዴክሶችንና እያንዳንዱን IPC ይመዝግቡ።</strong><span>ማስተካከያውን በውልዎ ቀመር ወይም በግብዓት ዋጋ ዘዴ ያሰላል።</span></li>
+          <li class="r"><strong>19ኙ ፍተሻዎች ሲያልፉ ያትሙ።</strong><span>ለፊርማ ዝግጁ ማጠቃለያና የሽፋን ደብዳቤ በA4 ያገኛሉ።</span></li>
+        </ol>
+        <p class="note r">ከመጀመሪያው ጥያቄ በኋላ፣ እያንዳንዱ አዲስ IPC 20 ደቂቃ ያህል ይወስዳል። ደረጃ በደረጃ የሚያሳይ ባለ 8 ገጽ መማሪያ (PDF) አብሮ ይመጣል።</p>
+      </div>
+      <figure class="phone-frame phone-frame-sm r" id="how-video" data-video="30" aria-label="EscaClaim ቪዲዮ (30 ሰከንድ)">
+        <div class="slot" data-slot>
+          <img class="slot-sheet" src="assets/img/start-here-640.webp" loading="lazy" decoding="async"
+               width="640" height="800" alt="የEscaClaim የመጀመሪያ ሉህ፦ ከውል መረጃ እስከ ታተመ ጥያቄ አምስት ደረጃዎች">
+          <p class="slot-tag"><strong>ቪዲዮ በዝግጅት ላይ</strong><span>VIDEO SLOT · 30s · 9:16 · PENDING</span></p>
+        </div>
+      </figure>
+    </div>
+  </section>
+
+  <!-- PROOF: real workbook screenshots, illustrative figures, no testimonials -->
+  <section class="band band-paper" id="proof">
+    <div class="wrap">
+      <p class="kicker-line r">በምሳሌው፣ በ12 ሚሊዮን ብር የሕንፃ ውል፣ ለ4 IPC የተጣራ ጥያቄው፦</p>
+      <h2 class="big-number r"><span id="count" data-to="739445.60">739,445.60</span> ብር</h2>
+      <p class="fine r">የምሳሌ ስሌት፦ ቁጥሮቹ ለማሳያ ብቻ ናቸው።</p>
+
+      <div class="proof-grid">
+        <figure class="shot shot-tall r" data-ui>
+          <img src="assets/img/claim-summary-640.webp" loading="lazy" decoding="async"
+               srcset="assets/img/claim-summary-640.webp 640w, assets/img/claim-summary-1200.webp 1200w"
+               sizes="(min-width: 960px) 520px, 92vw" width="1200" height="1500"
+               alt="የጥያቄ ማጠቃለያ ሉህ፦ ለእያንዳንዱ IPC ማስተካከያ፣ የጣሪያ ፍተሻ እና የተጣራ መጠን (ምሳሌ)">
+          <figcaption>የጥያቄ ማጠቃለያ፦ ለእያንዳንዱ IPC ማስተካከያ፣ የጣሪያ ፍተሻ እና የተጣራ መጠን።</figcaption>
+        </figure>
+        <figure class="shot r" data-ui>
+          <img src="assets/img/checks-800.webp" loading="lazy" decoding="async"
+               srcset="assets/img/checks-800.webp 800w, assets/img/checks-1600.webp 1600w"
+               sizes="(min-width: 960px) 620px, 92vw" width="1600" height="754"
+               alt="የፍተሻ ሉህ፦ 0 ክፍት ስህተቶች እና READY TO PRINT (ምሳሌ)">
+          <figcaption>19 አውቶማቲክ ፍተሻዎች ከማቅረብዎ በፊት ስህተቱን ያሳዩዎታል።</figcaption>
+        </figure>
+        <figure class="shot r" data-ui>
+          <img src="assets/img/claim-letter-640.webp" loading="lazy" decoding="async"
+               srcset="assets/img/claim-letter-640.webp 640w, assets/img/claim-letter-1200.webp 1200w"
+               sizes="(min-width: 960px) 620px, 92vw" width="1200" height="1500"
+               alt="ለፊርማ ዝግጁ የሽፋን ደብዳቤ ለመሐንዲሱ (ምሳሌ)">
+          <figcaption>ለፊርማ ዝግጁ የሽፋን ደብዳቤ፣ ከስሌቱ በራሱ ይሞላል።</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHAT'S INSIDE -->
+  <section class="band band-paper2" id="inside">
+    <div class="wrap inside">
+      <div>
+        <h2 class="r">በውስጡ ያለው</h2>
+        <ul class="files">
+          <li class="r"><strong>በምሳሌ የተሞላ ማስያ (Excel)</strong><span>ሙሉ ምሳሌ፦ ከውል መረጃ እስከ ታተመ ጥያቄ።</span></li>
+          <li class="r"><strong>ባዶ ማስያ (Excel)</strong><span>ለራስዎ ፕሮጀክት ዝግጁ።</span></li>
+          <li class="r"><strong>ደረጃ በደረጃ መማሪያ (PDF፣ 8 ገጽ)</strong><span>ምሳሌ፣ ኢንዴክሶችን ከየት እንደሚያገኙ እና ተደጋጋሚ ጥያቄዎች።</span></li>
+          <li class="r"><strong>የመጀመሪያ ገጽ (PDF)</strong><span>እንዴት እንደሚጀምሩ እና ነፃ የv1.x ማሻሻያዎች።</span></li>
+        </ul>
+        <p class="note r">ከExcel 2010 ጀምሮ፣ Excel 365፣ LibreOffice Calc 7+ እና Google Sheets። ማክሮ የለውም፣ ኢንተርኔት አያስፈልገውም።</p>
+      </div>
+      <figure class="shot r" data-ui>
+        <img src="assets/img/setup-coefficients-800.webp" loading="lazy" decoding="async"
+             srcset="assets/img/setup-coefficients-800.webp 800w, assets/img/setup-coefficients-1600.webp 1600w"
+             sizes="(min-width: 960px) 600px, 92vw" width="1600" height="338"
+             alt="የኮፊሸንት ሰንጠረዥ፦ ድምሩ 1.0000 እና PASS (ምሳሌ)">
+        <figcaption>የቀመሩ ኮፊሸንቶች፦ ድምሩ 1.0000 ካልሆነ ማስያው ያስጠነቅቃል።</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- OFFER + PRICE -->
+  <section class="band band-navy" id="offer">
+    <div class="wrap offer">
+      <div class="offer-main" data-when="solo">
+        <img class="offer-cover r" src="assets/img/cover-solo-600.webp" loading="lazy" decoding="async"
+             srcset="assets/img/cover-solo-600.webp 600w, assets/img/cover-solo-1000.webp 1000w"
+             sizes="(min-width: 960px) 440px, 92vw" width="1000" height="1000"
+             alt="EscaClaim የዋጋ ማስተካከያ ጥያቄ ማስያ ሽፋን">
+        <div class="offer-copy">
+          <h2 class="r">EscaClaim ማስያ</h2>
+          <p class="price r"><span data-price-num>2,500</span> ብር</p>
+          <ul class="ticks r">
+            <li>አራት ፋይሎች፦ ሁለት የExcel ማስያዎችና ሁለት PDF</li>
+            <li>19 አውቶማቲክ ፍተሻዎች</li>
+            <li>የውል ቀመር እና የግብዓት ዋጋ ዘዴ</li>
+            <li>ለፊርማ ዝግጁ ማጠቃለያና የሽፋን ደብዳቤ</li>
+          </ul>
+          <a class="btn r" data-cta="offer" href="#offer"><span>ዛሬውኑ ይዘዙ</span><span class="btn-price" data-price>2,500 ብር</span></a>
+        </div>
+      </div>
+
+      <div class="kit r" id="kit">
+        <h3>አራት መሣሪያዎች ያሉት ሙሉ ኪት</h3>
+        <p data-when="solo">በቅርቡ። ዋጋውና ይዘቱ ሲረጋገጥ እዚህ ይገለጻል።</p>
+        <div data-when="kit" hidden>
+          <p class="price"><span data-kit-price-num></span> ብር</p>
+          <a class="btn" data-cta="offer-kit" href="#offer"><span>ዛሬውኑ ይዘዙ</span><span class="btn-price" data-price></span></a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="band band-paper" id="faq">
+    <div class="wrap faq">
+      <h2 class="r">ተደጋጋሚ ጥያቄዎች</h2>
+      <div class="qa">
+        <details class="r">
+          <summary>በምን ፕሮግራም ይሰራል?</summary>
+          <p>ከExcel 2010 ጀምሮ (Windows)፣ Excel 365 (Windows እና Mac)፣ LibreOffice Calc 7+ እና Google Sheets። ማክሮ ወይም ኢንተርኔት አያስፈልገውም። በሞባይል Excel ለማየት ብቻ ይመከራል።</p>
+        </details>
+        <details class="r">
+          <summary>የትኞቹን የስሌት ዘዴዎች ይደግፋል?</summary>
+          <p>የውል ቀመር (Formula) ዘዴን እና የግብዓት ዋጋ (Benchmark) ዘዴን። ኮፊሸንቶቹን ከራስዎ ውል ይገለብጣሉ፤ ማስያው ለእያንዳንዱ IPC ማስተካከያውን ያሰላል።</p>
+        </details>
+        <details class="r">
+          <summary>ከከፈልኩ በኋላ ምን አገኛለሁ?</summary>
+          <p>አራቱን ፋይሎች፦ በምሳሌ የተሞላ ማስያ፣ ባዶ ማስያ፣ ባለ 8 ገጽ መማሪያ እና የመጀመሪያ ገጽ። የv1.x ማሻሻያዎች በነፃ ናቸው።</p>
+        </details>
+        <details class="r">
+          <summary>ማስያው ውሌን ይተረጉማል?</summary>
+          <p>አይተረጉምም። EscaClaim የስሌት መሣሪያ ነው። ኮፊሸንቶቹ፣ የመነሻ ቀኑ እና ሌሎቹ መረጃዎች ከራስዎ ውል መወሰድና ከመሐንዲሱ ጋር መስማማት አለባቸው። የሕግ ወይም የፋይናንስ ምክር አይደለም።</p>
+        </details>
+        <details class="r">
+          <summary>ፈቃዱ ምን ይፈቅዳል?</summary>
+          <p>አንድ ተጠቃሚ በአንድ ድርጅት ውስጥ ይጠቀምበታል። ለእያንዳንዱ ፕሮጀክት የባዶውን ማስያ ቅጂ ያስቀምጡ። ፋይሉን እንደገና መሸጥ ወይም ማጋራት አይፈቀድም።</p>
+        </details>
+        <details class="r">
+          <summary>ሙሉ ኪቱ መቼ ይገኛል?</summary>
+          <p data-when="solo">በቅርቡ። ዋጋውና ይዘቱ ሲረጋገጥ እዚህ ገጽ ላይ ይገለጻል።</p>
+          <p data-when="kit" hidden>አሁን ይገኛል፦ አራት መሣሪያዎች በአንድ ኪት።</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <section class="band band-navy final" id="final">
+    <div class="wrap">
+      <h2 class="r">የሚገባዎን በትክክል ይጠይቁ።</h2>
+      <a class="btn r" data-cta="final" href="#offer"><span>ዛሬውኑ ይዘዙ</span><span class="btn-price" data-price>2,500 ብር</span></a>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p class="foot-mark">EscaClaim</p>
+  <p class="foot-fine">EscaClaim የስሌት መሣሪያ ነው፤ ውልዎን ወይም ሕግን አይተረጉምም። በገጹ ላይ ያሉት ቁጥሮች ለማሳያ ብቻ ናቸው። © 2026 EscaClaim</p>
+</footer>
+
+<div class="sticky" id="sticky" aria-hidden="true">
+  <span class="sticky-price" data-price>2,500 ብር</span>
+  <a class="btn btn-sm" data-cta="sticky" href="#offer" tabindex="-1">ዛሬውኑ ይዘዙ</a>
+</div>
+
+<script src="app.js" defer></script>
+</body>
+</html>

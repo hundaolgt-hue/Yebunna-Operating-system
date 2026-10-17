@@ -1,20 +1,22 @@
 import { S, $, $$, api, esc, markdown, avatar, agentName, toast, view, composer, wireComposer, speakBtn, openDialog, onSubmit, ago } from '../core.js';
 
-const STATUS = { live: 'Live', minutes: 'Writing minutes', done: 'Ended', failed: 'Interrupted' };
+const STATUS = { live: 'Live', minutes: 'Writing minutes', done: 'Ended', failed: 'Interrupted', paused: 'Paused (usage limit)' };
+const ICON = { standup: '☀️', retro: '🔁', meeting: '👥' };
 const sorted = () => Object.values(S.meetings).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
 export function renderMeetings() {
   const list = sorted();
   view().innerHTML = `<div class="page">
     <div class="page-head"><h2>Meetings</h2><p>Put 2–6 bots in a room. They discuss, decide, and leave with owned action items and deadlines.</p>
-      <span class="spacer"></span><button class="btn-ghost" data-standup>☀️ Standup now</button><button class="btn" data-new>New meeting</button></div>
+      <span class="spacer"></span><button class="btn-ghost" data-retro>🔁 Retrospective now</button><button class="btn-ghost" data-standup>☀️ Standup now</button><button class="btn" data-new>New meeting</button></div>
+    ${playbook()}
     ${
       list.length
         ? `<div class="list">${list
             .map(
               (mt) => `<a class="list-row" href="#/meetings/${mt.id}">
           <span class="dot ${mt.status === 'live' || mt.status === 'minutes' ? 'running' : mt.status === 'failed' ? 'failed' : 'done'}"></span>
-          <div class="grow"><div class="t">${mt.kind === 'standup' ? '☀️ ' : '👥 '}${esc(mt.title)}</div><div class="s">${esc(mt.agenda)}</div></div>
+          <div class="grow"><div class="t">${ICON[mt.kind] || '👥'} ${esc(mt.title)}</div><div class="s">${esc(mt.agenda)}</div></div>
           <div class="avatars">${mt.participants.map((p) => avatar(p, 'sm')).join('')}</div>
           <span class="s">${STATUS[mt.status]} · ${ago(mt.createdAt)}</span>
         </a>`,
@@ -24,6 +26,18 @@ export function renderMeetings() {
     }
   </div>`;
   $('[data-new]', view()).addEventListener('click', () => newMeetingDialog());
+  $('[data-retro]', view()).addEventListener('click', async () => {
+    const mt = await api('/api/retro', { method: 'POST' }).catch((e) => toast(e.message));
+    if (mt) location.hash = `#/meetings/${mt.id}`;
+  });
+  $$('[data-del-rule]', view()).forEach((b) => b.addEventListener('click', () => api(`/api/rules/${b.dataset.delRule}`, { method: 'DELETE' }).catch((e) => toast(e.message))));
+  $('[data-add-rule]', view())?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    await api('/api/rules', { method: 'POST', body: { type: f.elements.type.value, text: f.elements.text.value } })
+      .then(() => toast('Rule added — every bot follows it from now on.'))
+      .catch((err) => toast(err.message));
+  });
   $('[data-standup]', view()).addEventListener('click', async () => {
     const mt = await api('/api/meetings', {
       method: 'POST',
@@ -31,6 +45,18 @@ export function renderMeetings() {
     }).catch((e) => toast(e.message));
     if (mt) location.hash = `#/meetings/${mt.id}`;
   });
+}
+
+function playbook() {
+  const rules = S.rules || [];
+  return `<section class="settings">
+    <h3>Team playbook</h3>
+    <p class="side-text">Rules every bot follows in every mission. The morning retrospective turns what worked into “do” rules and what went wrong into “don't” rules, and retires rules that stopped helping. Add your own or delete any.</p>
+    ${rules.length ? `<div class="rules">${rules
+      .map((r) => `<div class="rule"><span class="tag ${r.type}">${r.type === 'do' ? 'DO' : "DON'T"}</span><div class="grow">${esc(r.text)}<small>${r.source === 'founder' ? 'added by you' : r.source?.startsWith('retro:') ? `from a retrospective${r.why ? ` · ${esc(r.why)}` : ''}` : ''}</small></div><button class="btn-ghost danger" data-del-rule="${r.id}" title="Delete this rule">✕</button></div>`)
+      .join('')}</div>` : '<p class="faint small">No rules yet — they appear after the first retrospective.</p>'}
+    <form class="row-btns" data-add-rule><select class="select-sm" name="type"><option value="do">Do</option><option value="dont">Don't</option></select><input name="text" required placeholder="e.g. Write Amharic copy first, then English" style="flex:1;min-width:180px" /><button class="btn-ghost">Add rule</button></form>
+  </section>`;
 }
 
 export function newMeetingDialog() {
@@ -80,8 +106,8 @@ export function renderMeeting(id) {
   const items = mt.actionItems || [];
   v.innerHTML = `
     <div class="topbar">
-      <span class="dot ${mt.status === 'live' || mt.status === 'minutes' ? 'running' : mt.status === 'failed' ? 'failed' : 'done'}"></span>
-      <h2>${mt.kind === 'standup' ? '☀️' : '👥'} ${esc(mt.title)}</h2>
+      <span class="dot ${mt.status === 'live' || mt.status === 'minutes' ? 'running' : mt.status === 'failed' || mt.status === 'paused' ? 'failed' : 'done'}"></span>
+      <h2>${ICON[mt.kind] || '👥'} ${esc(mt.title)}</h2>
       <div class="meta"><span>${STATUS[mt.status]}</span><button class="btn-ghost danger" data-del>Delete</button></div>
     </div>
     <div class="scroll"><div class="thread">

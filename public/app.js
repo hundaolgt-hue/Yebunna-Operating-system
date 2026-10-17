@@ -33,7 +33,7 @@ function renderSidebar() {
       <span class="t">${esc(a.name)}</span></a>`)
     .join('');
 
-  const pendingApprovals = Object.values(S.tasks).filter((t) => t.status === 'approval').length + Object.values(S.missions).filter((m) => m.status === 'awaiting_approval').length;
+  const pendingApprovals = Object.values(S.tasks).filter((t) => t.status === 'approval' || t.status === 'founder').length + Object.values(S.missions).filter((m) => m.status === 'awaiting_approval').length;
   const liveMeetings = Object.values(S.meetings).filter((m) => m.status === 'live' || m.status === 'minutes').length;
   const badges = { board: pendingApprovals, meetings: liveMeetings };
   $$('[data-nav]').forEach((a) => {
@@ -192,6 +192,14 @@ function onEvent(e) {
     return renderSidebar();
   } else if (e.type === 'connections') {
     S.connections = e.connections;
+  } else if (e.type === 'rules') {
+    S.rules = e.rules;
+  } else if (e.type === 'limit') {
+    S.limit = e.limit;
+    renderLimit();
+  } else if (e.type === 'disk') {
+    S.disk = e.disk;
+    renderLimit();
   } else if (e.type === 'usage') {
     S.usage = e.usage;
   } else if (e.type === 'packs') {
@@ -229,7 +237,27 @@ async function loadState() {
   S.packs = st.packs || [];
   S.connections = st.connections || [];
   S.usage = st.usage || null;
+  S.rules = st.rules || [];
+  S.limit = st.limit || null;
+  S.disk = st.disk || null;
+  renderLimit();
   refresh('state');
+}
+
+// Paused on the Claude usage limit: say so on every page, with when it resumes.
+function renderLimit() {
+  const el = $('#limit-banner');
+  const gb = S.disk ? (S.disk.free / 1024 ** 3).toFixed(1) : '?';
+  if (S.limit?.kind === 'disk' || (!S.limit && S.disk && S.disk.status !== 'ok')) {
+    el.hidden = false;
+    el.innerHTML = `<span>💾 <b>${S.limit ? 'Paused — the disk is almost full' : 'Disk space is low'}</b> (${gb} GB free).${S.limit ? ' Work resumes by itself once there is room.' : ''}${S.disk?.saveError ? ` ${esc(S.disk.saveError)}` : ''}</span><span class="spacer"></span><a class="btn-ghost" href="#/settings">See what uses space</a>`;
+    return;
+  }
+  el.hidden = !S.limit;
+  if (!S.limit) return;
+  const at = new Date(S.limit.resetAt).toLocaleString();
+  el.innerHTML = `<span>⏸ <b>Paused — Claude usage limit reached.</b> Work resumes automatically ${S.limit.known ? `when it resets (${esc(at)})` : `at ${esc(at)} (checked every couple of hours)`}.</span><span class="spacer"></span><button class="btn-ghost" data-resume-now>Try now</button>`;
+  $('[data-resume-now]', el).addEventListener('click', () => api('/api/limit/resume', { method: 'POST' }).then(() => toast('Trying again…')).catch((e) => toast(e.message)));
 }
 
 // Countdown clocks.

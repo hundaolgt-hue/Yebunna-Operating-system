@@ -16,6 +16,9 @@ import { state, save, newId, now, slugify, WORKSPACE } from './store.js';
 import { bus } from './bus.js';
 import { logActivity, toolTracker } from './activity.js';
 import { demoPlan, demoOutput, demoReview, demoSummary } from './demo.js';
+import { connectedServices } from './connections.js';
+import { limited, isLimitError } from './limits.js';
+import { notifyFounder } from './telegram.js';
 
 export { bus };
 
@@ -79,7 +82,20 @@ const hoursLeft = (m) => Math.max(0.25, (Date.parse(m.deadline) - Date.now()) / 
 const fmt = (iso) => new Date(iso).toUTCString();
 const clip = (s, n) => (s && s.length > n ? `${s.slice(0, n)}\n…[truncated]` : s || '');
 export const missionTasks = (m) => m.taskIds.map((id) => state.tasks[id]).filter(Boolean);
-const OPEN = ['queued', 'in_progress', 'review', 'approval'];
+// blocked = the CEO is working out how to unblock it; founder = waiting on something only the founder can do
+const OPEN = ['queued', 'in_progress', 'review', 'approval', 'blocked', 'founder'];
+const MAX_UNBLOCKS = 2; // CEO attempts per task before it goes to the founder
+
+/** The specialists, with what each can use, for the CEO's decisions. */
+function teamList() {
+  return specialists()
+    .map((a) => {
+      const linked = connectedServices(a.id);
+      const extra = [...linked, ...(a.computer ? ['a web browser (computer use)'] : []), ...(state.settings.terminal ? ['terminal'] : [])];
+      return `- "${a.id}" = ${a.name}, ${a.role}: ${a.specialties.join(', ')}${extra.length ? ` · can use: ${extra.join(', ')}` : ''}`;
+    })
+    .join('\n');
+}
 
 function newMission({ goal, deadline, source = 'founder' }) {
   const m = {
@@ -153,6 +169,15 @@ function handleMessage(m, { text, mode }) {
   const run = mode === 'ask' ? answer(m, text) : plan(m, text);
   run.catch((e) => {
     if (m.status === 'cancelled') return;
+    if (isLimitError(e)) {
+      // Keep the follow-up and handle it when the limit resets.
+      for (const item of m.thread) item.streaming = false;
+      m.thread = m.thread.filter((it) => !(it.kind === 'plan' && !it.taskIds?.length && !it.text));
+      (m.queue ||= []).unshift({ text, mode });
+      m.waitingLimit = true;
+      m.status = ['planning', 'failed'].includes(before) ? (missionTasks(m).length ? 'running' : 'planning') : before;
+      return emitMission(m);
+    }
     console.error(`mission ${m.id} follow-up failed:`, e.message);
     for (const item of m.thread) item.streaming = false;
     addThread(m, { role: 'ceo', kind: 'escalation', text: `I couldn't handle that ${mode === 'ask' ? 'question' : 'follow-up'}: ${e.message}. The rest of the mission continues — try again in a moment.` });
@@ -220,6 +245,13 @@ export function resumeAll() {
       if (t.status === 'in_progress' || t.status === 'review') t.status = 'queued';
     }
     for (const item of m.thread) item.streaming = false;
+    if (m.status === 'cancelled') continue;
+    for (const t of missionTasks(m)) {
+      if (t.status === 'blocked' && t.blocker) {
+        t.unblocks = Math.max(0, (t.unblocks || 1) - 1); // the interrupted attempt doesn't count
+        setTimeout(() => handleBlocker(m, t, t.blocker), 0);
+      }
+    }
     if (m.status === 'running' || m.status === 'reporting') {
       m.status = 'running';
       schedule(m);
@@ -258,6 +290,7 @@ function addTasks(m, item, specs) {
       brief: String(s.brief || ''),
       deliverable: String(s.deliverable || ''),
       skillId: s.skillId || null,
+      size: ['small', 'medium', 'large'].includes(s.size) ? s.size : 'medium',
       deadline: new Date(due).toISOString(),
       dependsOn: (s.depends_on || []).map((k) => keyToId[k]).filter(Boolean),
       status: 'queued',
@@ -283,9 +316,7 @@ async function plan(m, instruction) {
   const existing = missionTasks(m)
     .map((t) => `- [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}`)
     .join('\n');
-  const team = specialists()
-    .map((a) => `- "${a.id}" = ${a.name}, ${a.role}: ${a.specialties.join(', ')}`)
-    .join('\n');
+  const team = teamList();
   const prompt = `Founder's goal: ${m.goal}
 Current time: ${fmt(now())}
 Mission deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} hours from now)
@@ -299,13 +330,17 @@ Your specialists (use the quoted id in "agent"):
 ${team}
 
 Give each task a realistic deadline in hours from now that fits inside the mission deadline, leaving time
-for dependencies. Keep it to ${instruction ? '1–3' : '4–8'} focused tasks. Use depends_on (task keys) when a
+for dependencies. Give each task a size — it decides how much of the founder's Claude usage it may spend:
+"small" = a quick, short piece (a few posts, a list, a short email, a check, a summary of given input);
+"medium" = a normal deliverable (a plan, a document, a page of copy, light research);
+"large" = heavy work only (code or a multi-file build, a spreadsheet model, deep multi-source research,
+long browser work). Most tasks are small or medium; use large only when the task really needs it. Keep it to ${instruction ? '1–3' : '4–8'} focused tasks. Use depends_on (task keys) when a
 task needs another's output. Each brief must say exactly what to produce and which files to save.
 
 Reply with ONLY a JSON object, no other text:
 {"summary": "<2–4 sentence message to the founder explaining who does what>",
  "tasks": [{"key": "t1", "agent": "<specialist id>", "title": "<short imperative>", "brief": "<what to do and why>",
-            "deliverable": "<the concrete artifact to hand back>", "due_in_hours": <number>, "depends_on": ["<key>"]}]}`;
+            "deliverable": "<the concrete artifact to hand back>", "due_in_hours": <number>, "size": "small" | "medium" | "large", "depends_on": ["<key>"]}]}`;
 
   let parsed;
   for (let attempt = 1; ; attempt++) {
@@ -331,6 +366,7 @@ Reply with ONLY a JSON object, no other text:
   if (state.settings.approvePlans) {
     item.needsApproval = true;
     m.status = 'awaiting_approval';
+    notifyFounder(`🔐 Plan ready for your OK — “${m.title}”. Open Yebunna OS to approve it, or reply “approve” to this message.`, { type: 'plan', id: m.id });
     emitMission(m);
     return drainQueue(m);
   }
@@ -365,7 +401,7 @@ async function answer(m, question) {
 // ---- scheduling & execution -------------------------------------------------
 
 function schedule(m) {
-  if (m.status !== 'running') return;
+  if (m.status !== 'running' || limited()) return; // paused on the usage limit: resume() reschedules
   const tasks = missionTasks(m);
 
   for (const t of tasks) {
@@ -421,7 +457,14 @@ Do the work now — you, not someone else. Check your skills list and use any th
 (code, data, spreadsheets, copy, assets) as files ONLY inside ${workDir}/ — never create other folders
 under missions/ and never save duplicate copies elsewhere. Teammates' files are in ${m.folder}/ (read them,
 don't copy them). Check your files (e.g. run them) before you finish. Your FINAL message must be the complete deliverable in Markdown (it is filed automatically),
-ending with a short "Files" list of everything you saved.`;
+ending with a short "Files" list of everything you saved.
+
+IF YOU ARE STUCK: first try another way (a different source, tool or approach, a teammate's files). If you
+still cannot finish, do NOT guess or fake it: hand in whatever partial work you have, and make the LAST line
+of your message exactly:
+BLOCKED: <what stops you> | NEED: <exactly what would unblock you, and from whom>
+The CEO will unblock you or ask the founder. Use it only for real blockers (missing access or login, a
+decision or information only the founder has, a tool that fails every time) — not for small doubts.`;
 }
 
 async function runTask(m, t) {
@@ -432,11 +475,15 @@ async function runTask(m, t) {
     emitTask(t);
     return schedule(m);
   }
-  t.status = 'in_progress';
+  const reviewOnly = t.reviewOnly && t.output; // the limit hit during the CEO review: the work is already done
+  t.reviewOnly = false;
+  t.status = reviewOnly ? 'review' : 'in_progress';
   t.startedAt = t.startedAt || now();
   const previous = t.output;
-  t.output = '';
-  t.reasoning = '';
+  if (!reviewOnly) {
+    t.output = '';
+    t.reasoning = '';
+  }
   emitTask(t);
   const ref = { type: 'task', id: t.id, missionId: m.id };
   logActivity(agent.id, `started “${t.title}”`, ref);
@@ -463,6 +510,7 @@ async function runTask(m, t) {
         tools: toolsFor(agent),
         agentId: agent.id,
         kind: 'task',
+        size: t.size,
         maxTurns,
         signal: signal(m),
         demo: () => demoOutput(t.agentId, t, m.goal),
@@ -472,7 +520,7 @@ async function runTask(m, t) {
 
   try {
     const prompt = assignmentPrompt(m, t, agent, previous);
-    try {
+    if (!reviewOnly) try {
       await run(prompt, agent.computer ? 150 : 100);
     } catch (e) {
       if (e.code !== 'max_turns') throw e;
@@ -484,6 +532,11 @@ async function runTask(m, t) {
       }
     }
     if (!t.output.trim()) throw new Error('The bot finished without writing a deliverable.');
+    const blocker = parseBlocker(t.output);
+    if (blocker) {
+      t.output = t.output.replace(BLOCKED_LINE, '').trimEnd(); // shown as the blocker box instead
+      return handleBlocker(m, t, blocker);
+    }
 
     t.status = 'review';
     emitTask(t);
@@ -500,16 +553,132 @@ async function runTask(m, t) {
       t.status = 'approval';
       fileDeliverable(m, t);
       addThread(m, { role: 'ceo', kind: 'review', taskId: t.id, text: `**${t.title}** passed my review and is waiting for your sign-off.` });
+      notifyFounder(`🔐 “${t.title}” (${agent.name}) is waiting for your sign-off — mission “${m.title}”. Reply “approve”, or reply with the changes you want.`, { type: 'approval', id: t.id });
     } else {
       finishTask(m, t);
     }
   } catch (e) {
     if (m.status === 'cancelled') return;
-    t.status = 'failed';
-    t.error = e.message;
-    logActivity(agent.id, `could not finish “${t.title}”: ${e.message}`, ref);
+    if (isLimitError(e)) {
+      // Usage limit: put it back in the queue untouched; it restarts when the limit resets.
+      if (t.status === 'review') t.reviewOnly = true;
+      else t.output = previous || '';
+      t.status = 'queued';
+      logActivity(agent.id, `paused “${t.title}” — Claude usage limit reached`, ref);
+      return emitTask(t);
+    }
+    // Any other failure goes to the CEO like a blocker, instead of silently failing the task.
+    return handleBlocker(m, t, { reason: `The run failed: ${e.message}`, need: '' });
   }
   emitTask(t);
+  schedule(m);
+}
+
+/** "BLOCKED: … | NEED: …" on the last lines of a deliverable. */
+const BLOCKED_LINE = /^\**BLOCKED:?\**\s*(.+?)(?:\s*\|\s*\**NEED:?\**\s*(.+))?\s*$/im;
+export function parseBlocker(text) {
+  const tail = String(text || '').trim().split('\n').slice(-4).join('\n');
+  const m = tail.match(BLOCKED_LINE);
+  return m ? { reason: m[1].trim(), need: (m[2] || '').trim() } : null;
+}
+
+/** A bot is stuck: the CEO tries to unblock it; if only the founder can, the founder is asked. */
+async function handleBlocker(m, t, blocker) {
+  const agent = getAgent(t.agentId);
+  const ref = { type: 'task', id: t.id, missionId: m.id };
+  t.status = 'blocked';
+  t.blocker = { ...blocker, at: now() };
+  t.unblocks = (t.unblocks || 0) + 1;
+  emitTask(t);
+  logActivity(t.agentId, `is blocked on “${t.title}”: ${blocker.reason}`, ref);
+  addThread(m, { role: 'ceo', kind: 'review', taskId: t.id, text: `🧱 **${agent?.name}** is blocked on **${t.title}**: ${blocker.reason}${blocker.need ? ` — needs: ${blocker.need}` : ''}. Looking into it.` });
+
+  if (t.unblocks > MAX_UNBLOCKS) {
+    return askFounder(m, t, `${agent?.name} is still blocked after ${MAX_UNBLOCKS} tries: ${blocker.reason}${blocker.need ? ` Needs: ${blocker.need}` : ''}`);
+  }
+  let d;
+  try {
+    const raw = await complete({
+      system: systemPrompt(ceo()),
+      messages: [
+        {
+          role: 'user',
+          content: `${agent?.name} (${agent?.role}) is blocked and reported to you.
+Mission: ${m.goal}
+Task: ${t.title}
+Brief: ${t.brief}
+Blocker: ${blocker.reason}
+What they say would unblock them: ${blocker.need || '(not said)'}
+Their partial work:
+${clip(t.output, 3000) || '(none)'}
+
+The team (and what each can use):
+${teamList()}
+Workspace folder for this mission: ${m.folder}/ (you can read files to check)
+
+Decide how to unblock this. Prefer solving it inside the team:
+- "retry": the same bot can get past it with your guidance (another approach or source, where a file is, a teammate's output, a tool it already has).
+- "reassign": a teammate is better placed (has the access, tool or skill) — name them.
+- "founder": ONLY when nobody on the team can do it: a login or password, 2FA, payment, account access or permission, money or publishing approval, a business decision, or information only the founder has.
+
+Reply with ONLY JSON:
+{"action": "retry" | "reassign" | "founder", "agent": "<teammate id, for reassign>", "instructions": "<what the bot should do now>", "question": "<for founder: one clear request — exactly what the founder must do or answer>"}`,
+        },
+      ],
+      effort: 'medium',
+      tools: CEO_TOOLS,
+      agentId: 'ceo',
+      kind: 'review',
+      maxTurns: 15,
+      signal: signal(m),
+      demo: () => JSON.stringify({ action: 'founder', question: `Please help ${agent?.name}: ${blocker.need || blocker.reason}` }),
+    });
+    d = extractJson(raw);
+  } catch (e) {
+    if (m.status === 'cancelled') return;
+    if (isLimitError(e)) return; // stays "blocked"; the CEO picks it up again when the limit resets
+    return askFounder(m, t, `${agent?.name} is blocked: ${blocker.reason}${blocker.need ? ` Needs: ${blocker.need}` : ''}`);
+  }
+  if (m.status === 'cancelled') return;
+  const target = d.action === 'reassign' && resolveAgent(d.agent);
+  if (d.action === 'founder' || (d.action === 'reassign' && (!target || target.id === 'ceo'))) {
+    return askFounder(m, t, String(d.question || d.instructions || blocker.need || blocker.reason));
+  }
+  if (target && target.id !== t.agentId) {
+    addThread(m, { role: 'ceo', kind: 'review', taskId: t.id, text: `Moved **${t.title}** from ${agent?.name} to **${target.name}**: ${d.instructions || ''}` });
+    t.agentId = target.id;
+  } else {
+    addThread(m, { role: 'ceo', kind: 'review', taskId: t.id, text: `Told ${agent?.name} how to get past it: ${d.instructions || 'try another approach.'}` });
+  }
+  t.feedback = `You (or a teammate) hit a blocker: ${blocker.reason}. CEO's instructions: ${d.instructions || 'try another approach.'} Finish the task.`;
+  t.status = 'queued';
+  emitTask(t);
+  schedule(m);
+}
+
+/** Only the founder can unblock this: ask in the thread and on Telegram, then wait. */
+function askFounder(m, t, question) {
+  t.status = 'founder';
+  t.question = question;
+  emitTask(t);
+  addThread(m, { role: 'ceo', kind: 'escalation', taskId: t.id, text: `🙋 **Needs you** — ${question}\n\nAnswer on the task card (or reply on Telegram) and the team carries on.` });
+  logActivity('ceo', `needs the founder for “${t.title}”`, { type: 'task', id: t.id, missionId: m.id });
+  notifyFounder(`🙋 Needs you — “${m.title}”\nTask: ${t.title}\n\n${question}\n\nReply to this message with your answer, or answer in Yebunna OS.`, { type: 'task', id: t.id });
+  schedule(m);
+}
+
+/** The founder answered a blocker: the task goes back to its bot with the answer. */
+export function answerTask(t, text) {
+  const m = state.missions[t.missionId];
+  if (!m || t.status !== 'founder') throw new Error('This task is not waiting for you.');
+  addThread(m, { role: 'user', kind: 'text', text: `Re “${t.title}”: ${text}` });
+  t.feedback = `You were blocked (${t.blocker?.reason || t.question}). The founder answered: ${text}\nUse this and finish the task.`;
+  t.question = null;
+  t.unblocks = 0;
+  t.status = 'queued';
+  emitTask(t);
+  if (m.status === 'done' || m.status === 'failed') m.status = 'running';
+  emitMission(m);
   schedule(m);
 }
 
@@ -524,6 +693,7 @@ function fileDeliverable(m, t) {
 function finishTask(m, t) {
   t.status = 'done';
   t.completedAt = now();
+  if (t.reasoning?.length > 20_000) t.reasoning = `…${t.reasoning.slice(-20_000)}`; // keep saved data small
   t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
   fileDeliverable(m, t);
   logActivity(t.agentId, `delivered “${t.title}”${t.late ? ' (late)' : ''}`, { type: 'task', id: t.id, missionId: m.id });
@@ -580,7 +750,7 @@ Reply with ONLY JSON: {"verdict": "approve" | "revise", "feedback": "<one or two
     const r = extractJson(raw);
     return { verdict: r.verdict === 'revise' ? 'revise' : 'approve', feedback: String(r.feedback || '') };
   } catch (e) {
-    if (e.message === 'aborted') throw e;
+    if (e.message === 'aborted' || isLimitError(e)) throw e;
     return { verdict: 'approve', feedback: `Accepted without a full review (${e.message}).` };
   }
 }
@@ -609,6 +779,13 @@ and file paths), deadline performance, risks/gaps, and the next 3 moves. Be conc
       text = await streamInto(m, item, { system: systemPrompt(ceo()), messages: [{ role: 'user', content }], agentId: 'ceo', kind: 'report', demo: () => demoSummary(m, tasks) });
     } catch (e) {
       if (m.status === 'cancelled') return;
+      if (isLimitError(e)) {
+        // Write the report when the limit resets (schedule() calls report() again).
+        m.thread = m.thread.filter((it) => it !== item);
+        m.status = 'running';
+        m.waitingLimit = true;
+        return emitMission(m);
+      }
       if (attempt === 2) {
         // Never leave the founder without a report: write a plain one from the results.
         text = `## Mission report\n\n_I couldn't write the full report (${e.message}), so here is the factual summary._\n\n${tasks
@@ -623,23 +800,71 @@ and file paths), deadline performance, risks/gaps, and the next 3 moves. Be conc
   m.completedAt = now();
   emitMission(m);
   logActivity('ceo', `finished “${m.title}” and filed the report`, { type: 'mission', id: m.id });
+  if (m.source === 'founder') notifyFounder(`✅ Mission complete — “${m.title}”. ${tasks.filter((t) => t.status === 'done').length}/${tasks.length} tasks delivered. The report is in Yebunna OS — reply here with comments or next steps.`, { type: 'mission', id: m.id });
   bus.emit('trigger', { event: 'mission_completed', mission: m });
 }
 
 function fail(m, e) {
   if (m.status === 'cancelled') return;
+  if (isLimitError(e)) {
+    // Hit the usage limit while planning: plan again when it resets.
+    for (const item of m.thread) item.streaming = false;
+    m.thread = m.thread.filter((it) => !(it.kind === 'plan' && !it.taskIds?.length));
+    m.status = 'planning';
+    m.waitingLimit = true;
+    return emitMission(m);
+  }
   console.error(`mission ${m.id} failed:`, e.message);
   for (const item of m.thread) item.streaming = false;
   m.status = 'failed';
+  notifyFounder(`⚠️ Mission “${m.title}” stopped: ${e.message}. Open Yebunna OS to retry.`, { type: 'mission', id: m.id });
   addThread(m, { role: 'ceo', kind: 'escalation', text: `Something broke: ${e.message}. Send a follow-up ("Delegate to team") to try again.` });
 }
+
+// ---- usage limit: pause and resume ------------------------------------------
+
+bus.on('limit.hit', (limit) => {
+  const when = new Date(limit.resetAt).toLocaleString();
+  for (const m of Object.values(state.missions)) {
+    if (!['running', 'planning', 'reporting'].includes(m.status)) continue;
+    if (limit.kind === 'disk') {
+      addThread(m, { role: 'ceo', kind: 'review', text: '⏸ Paused — the disk is almost full. Work in progress went back in the queue and restarts by itself once there is free space (Settings → Storage shows what is using it).' });
+      continue;
+    }
+    addThread(m, { role: 'ceo', kind: 'review', text: `⏸ Paused — your Claude usage limit was reached. Work in progress went back in the queue and restarts automatically ${limit.known ? `when the limit resets (${when})` : `at ${when} (I check again every couple of hours)`}.` });
+  }
+});
+
+bus.on('limit.reset', () => {
+  for (const m of Object.values(state.missions)) {
+    if (['cancelled', 'done', 'failed'].includes(m.status) && !m.waitingLimit) continue;
+    const wasWaiting = m.waitingLimit || missionTasks(m).some((t) => t.status === 'queued' || t.status === 'blocked');
+    m.waitingLimit = false;
+    if (!wasWaiting && m.status !== 'running') continue;
+    if (m.status === 'planning' && !missionTasks(m).length) {
+      addThread(m, { role: 'ceo', kind: 'review', text: '▶️ The usage limit has reset — planning now.' });
+      plan(m).catch((e) => fail(m, e));
+      continue;
+    }
+    if (m.status === 'planning') m.status = 'running';
+    if (wasWaiting) addThread(m, { role: 'ceo', kind: 'review', text: '▶️ The usage limit has reset — the team is back at work.' });
+    for (const t of missionTasks(m)) {
+      if (t.status === 'blocked' && t.blocker) {
+        t.unblocks = Math.max(0, (t.unblocks || 1) - 1);
+        handleBlocker(m, t, t.blocker);
+      }
+    }
+    drainQueue(m);
+    schedule(m);
+  }
+});
 
 // ---- deadline watchdog ------------------------------------------------------
 
 setInterval(() => {
   const t0 = Date.now();
   for (const t of Object.values(state.tasks)) {
-    if (t.overdue || ['done', 'failed'].includes(t.status) || Date.parse(t.deadline) > t0) continue;
+    if (t.overdue || ['done', 'failed', 'founder'].includes(t.status) || Date.parse(t.deadline) > t0) continue;
     const m = state.missions[t.missionId];
     if (!m || m.status === 'cancelled') continue;
     t.overdue = true;

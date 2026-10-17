@@ -5,6 +5,7 @@ const KIND = {
   skill: '🧩 Run a skill',
   mission: '🚀 CEO plans a mission',
   standup: '☀️ Team standup',
+  retro: '🔁 Retrospective (lessons → playbook rules)',
 };
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const EVENTS = { mission_completed: 'a mission is completed', task_completed: 'any task is completed' };

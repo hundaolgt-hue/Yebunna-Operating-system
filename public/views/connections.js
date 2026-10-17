@@ -24,7 +24,7 @@ export function renderConnections() {
         }
         const config = {};
         $$('[data-field]', form).forEach((i) => (config[i.name] = i.value));
-        const bots = allBox?.checked ? ['*'] : $$('[name=bots]:checked', form).map((c) => c.value);
+        const bots = allBox ? (allBox.checked ? ['*'] : $$('[name=bots]:checked', form).map((c) => c.value)) : undefined;
         await api(`/api/connections/${id}`, { method: 'PUT', body: { config, bots } });
         toast('Saved — testing the connection…');
         const st = await api(`/api/connections/${id}/test`, { method: 'POST' });
@@ -54,12 +54,19 @@ function card(c) {
       <ol class="steps">${c.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
       <p class="small"><a class="link" href="${c.link}" target="_blank" rel="noopener">Open ${esc(new URL(c.link).hostname)} ↗</a></p>
       <form class="form" data-conn="${c.id}">
-        ${c.fields.map((f) => `<label>${esc(f.label)}<input data-field name="${f.key}" ${f.secret ? 'type="password" autocomplete="off"' : ''} placeholder="${esc(f.placeholder || '')}" value="${esc(c.config[f.key] || '')}" /></label>`).join('')}
-        <div class="field-label">Which bots may use it</div>
+        ${c.fields
+          .map((f) =>
+            f.secret
+              ? // Never prefilled, so the browser can't swap in a saved password; empty keeps the saved token.
+                `<label>${esc(f.label)}<input data-field name="${f.key}" type="password" autocomplete="new-password" spellcheck="false" placeholder="${esc(c.config[f.key] ? `Saved (${c.config[f.key]}) — paste a new one to replace it` : f.placeholder || '')}" value="" /></label>`
+              : `<label>${esc(f.label)}<input data-field name="${f.key}" placeholder="${esc(f.placeholder || '')}" value="${esc(c.config[f.key] || '')}" /></label>`,
+          )
+          .join('')}
+        ${c.system ? '' : `<div class="field-label">Which bots may use it</div>
         <label class="check"><input type="checkbox" data-all ${all ? 'checked' : ''}/> All bots</label>
         <div class="pick">${S.agents
           .map((a) => `<label class="pick-item"><input type="checkbox" name="bots" value="${a.id}" ${all || c.bots.includes(a.id) ? 'checked' : ''}/>${avatar(a.id, 'sm')}<span>${esc(a.name)}<small>${esc(a.role)}</small></span></label>`)
-          .join('')}</div>
+          .join('')}</div>`}
         <div class="row-btns end">${c.enabled ? '<button class="btn-ghost danger" value="remove">Disconnect</button>' : ''}<button class="btn" value="save">Save & test</button></div>
       </form>
     </details>
