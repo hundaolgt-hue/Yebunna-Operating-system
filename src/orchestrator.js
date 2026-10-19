@@ -20,6 +20,7 @@ import { demoPlan, demoOutput, demoReview, demoSummary } from './demo.js';
 import { connectedServices } from './connections.js';
 import { limited, isLimitError } from './limits.js';
 import { notifyFounder } from './telegram.js';
+import { publishTask, publishReport } from './drivesync.js';
 
 export { bus };
 
@@ -397,12 +398,16 @@ function addTasks(m, item, specs) {
     };
     state.tasks[t.id] = t;
     m.taskIds.push(t.id);
+    t.workDir = taskWorkDir(m, t);
     item.taskIds.push(t.id);
     emitTask(t);
     logActivity(t.agentId, `was assigned “${t.title}” (due ${new Date(t.deadline).toLocaleString()})`, { type: 'task', id: t.id, missionId: m.id });
   }
   return dropped;
 }
+
+/** Each task has its own work folder: missions/<mission>/<NN>-<task>/ (all its files, nothing else). */
+const taskWorkDir = (m, t) => `${m.folder}/${String(m.taskIds.indexOf(t.id) + 1).padStart(2, '0')}-${slugify(t.title, 32)}`;
 
 /** Tasks run one at a time in plan order: make sure each comes after the tasks it depends on. */
 function inOrder(specs) {
@@ -452,6 +457,7 @@ ${briefingStandard()}
 
 Reply with ONLY JSON:
 {"summary": "<1–2 short sentences for the founder: what happens, in what order>",
+ "product": "<the product's short name, 2–5 words, e.g. ProfitCheck Pro>",
  "edits": [{"task": "<existing task id>", "change": "<the change, complete and specific>"}],
  "tasks": [{"key": "t1", "agent": "<specialist id>", "title": "<short imperative>", "brief": "<the brief>",
             "inputs": ["<paths or facts>"], "skills": ["<exact skill names>"], "acceptance": ["<criterion>", "..."],
@@ -488,6 +494,7 @@ Reply with ONLY JSON:
       retry = '\n\nYour previous reply was not valid JSON. Reply with the JSON object only.';
     }
   }
+  if (parsed.product && !m.product) m.product = String(parsed.product).slice(0, 50);
   for (const e of parsed.edits) amendTask(state.tasks[e.task], String(e.change), { quiet: true });
   const dropped = parsed.tasks.length ? addTasks(m, item, parsed.tasks) : [];
   const edited = parsed.edits.map((e) => `✏️ Updated **${state.tasks[e.task].title}**: ${e.change}`);
@@ -601,7 +608,7 @@ function assignmentPrompt(m, t, agent) {
     .map((d) => `### ${getAgent(d.agentId)?.name}: ${d.title}\n${handoverOf(d)}`)
     .join('\n\n');
   const skill = t.skillId && state.skills[t.skillId];
-  const workDir = `${m.folder}/${slugify(agent.name, 20)}`;
+  const workDir = (t.workDir ||= taskWorkDir(m, t));
   const revision = t.feedback ? `\n\nCHANGE REQUESTED: ${t.feedback}\nYour earlier files are in ${workDir}/: update them; don't start over unless the change needs it.` : '';
   const named = (t.skills || []).map((name) => ({ name, s: skillByName(name) }));
   const skills = named.map(({ name, s }) => (s ? `- ${s.name} → ${s.path ? `Read ${s.path} and follow it` : 'written skill, below'}` : `- ${name} → not installed: find it with find-skills (\`npx skills find ${name}\`) and install it into .skills/, or work without it and say so`));
@@ -611,7 +618,10 @@ Product: ${m.goal}
 Brief: ${t.brief}
 Deliverable: ${t.deliverable}${t.inputs?.length ? `\nInputs:\n${t.inputs.map((x) => `- ${x}`).join('\n')}` : ''}${skills.length ? `\nSkills (open each before you start):\n${skills.join('\n')}` : ''}${t.acceptance?.length ? `\nAcceptance criteria (check them yourself before handing in):\n${t.acceptance.map((x) => `- ${x}`).join('\n')}` : ''}
 Deadline: ${fmt(t.deadline)} (now ${fmt(now())})
-Save files ONLY in ${workDir}/ (mission folder ${m.folder}/; read teammates' files there, don't copy them).
+Save files ONLY in ${workDir}/ (this task's folder; mission folder ${m.folder}/: read teammates' files there, don't copy them).
+Name files clearly for the founder (e.g. niche-report.md, profitcheck-model.xlsx, ad-video-9x16.mp4); no dates or
+version numbers in names (they are added when the work is published). Update files in place on a revision; delete
+drafts and temp files before you hand in, so the folder holds only the final deliverables.
 ${skill?.path ? `\nUse your skill "${skill.name}": Read ${skill.path} and follow it.\n` : ''}${writtenBodies.length ? `\n${writtenBodies.join('\n\n')}\n` : ''}${inputs ? `\nHANDED OVER BY TEAMMATES (open their files when you need detail):\n${inputs}` : ''}${revision}
 
 Do the work now, in files. Check them (e.g. run them) before you finish.
@@ -885,6 +895,12 @@ function finishTask(m, t) {
   t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
   fileDeliverable(m, t);
   logActivity(t.agentId, `delivered “${t.title}”${t.late ? ' (late)' : ''}`, { type: 'task', id: t.id, missionId: m.id });
+  try {
+    const where = publishTask(m, t, getAgent(t.agentId)?.name || 'bot');
+    if (where) logActivity(t.agentId, `saved “${t.title}” v${t.version} to Google Drive`, { type: 'task', id: t.id, missionId: m.id });
+  } catch (e) {
+    logActivity('ceo', `couldn't copy “${t.title}” to Google Drive: ${e.message}`, { type: 'task', id: t.id, missionId: m.id });
+  }
   bus.emit('trigger', { event: 'task_completed', task: t });
 }
 
@@ -998,6 +1014,12 @@ Don't retell each task.`;
     }
   }
   fs.writeFileSync(path.join(WORKSPACE, m.folder, '00-mission-report.md'), `# Mission report: ${m.goal}\n\n${item.text}\n`);
+  try {
+    const where = publishReport(m, item.text);
+    if (where) item.text += `\n\n📁 Google Drive: ${where}/ (report v${m.reportVersion})`;
+  } catch (e) {
+    item.text += `\n\n⚠️ Couldn't copy to Google Drive: ${e.message}`;
+  }
   m.status = 'done';
   m.completedAt = now();
   emitMission(m);

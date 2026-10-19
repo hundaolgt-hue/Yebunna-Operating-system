@@ -95,14 +95,18 @@ export const SERVICES = {
     label: 'Google Drive',
     icon: '🗂',
     bots: ['*'],
-    fields: [{ key: 'path', label: 'Google Drive folder on this PC', placeholder: 'G:\\My Drive' }],
+    fields: [
+      { key: 'path', label: 'Google Drive folder on this PC', placeholder: 'G:\\My Drive' },
+      { key: 'outputs', label: 'Folder for the team\'s outputs inside it (optional)', placeholder: 'Yebunna OS' },
+    ],
     steps: [
-      'Install "Google Drive for desktop" (google.com/drive/download) and sign in.',
+      'Install "Google Drive for desktop" (google.com/drive/download) and sign in with the Google account whose Drive should get the outputs.',
       'It adds a drive such as G:\\ — open it in File Explorer and copy the path of "My Drive" (e.g. G:\\My Drive).',
-      'Paste the path below. Bots read files there and save to it only when a task asks.',
+      'Paste the path below. Optionally name the outputs folder (default "Yebunna OS"); to use a folder someone shared with you, first add a shortcut to it in My Drive and give its name here.',
+      'Click Save & test. From now on every approved deliverable is copied there: one folder per mission ("2026-10-19 Product name"), one numbered folder per task, files stamped with version and time. A new version replaces the old one.',
     ],
     link: 'https://www.google.com/drive/download/',
-    uses: 'Read your Drive files and save deliverables into Drive when a task asks.',
+    uses: 'Every approved deliverable and mission report is copied to your Drive, organised by mission and task, version- and time-stamped, with old versions removed. Bots can also read your Drive files.',
   },
 };
 
@@ -178,7 +182,10 @@ export async function testConnection(id) {
       if (!cfg.path) throw new Error('No folder set');
       const st = fs.statSync(cfg.path);
       if (!st.isDirectory()) throw new Error('That path is not a folder');
-      account = `${fs.readdirSync(cfg.path).length} items in ${path.basename(cfg.path) || cfg.path}`;
+      const out = path.join(cfg.path, cfg.outputs || 'Yebunna OS');
+      fs.mkdirSync(out, { recursive: true });
+      fs.accessSync(out, fs.constants.W_OK);
+      account = `outputs go to ${out}`;
     } else {
       if (!cfg.token) throw new Error('No token saved');
       const call = async (url, headers = {}) => {
@@ -296,6 +303,13 @@ export function connectionRuntime(agentId) {
   return { env, addDirs };
 }
 
+/** Where finished work is published in Drive (created when needed), or null when Drive isn't connected. */
+export function driveOutputRoot() {
+  const c = conns().gdrive;
+  if (!c?.enabled || !c.config?.path || !fs.existsSync(c.config.path)) return null;
+  return path.join(c.config.path, String(c.config.outputs || 'Yebunna OS').replace(/[<>:"/\\|?*]/g, ' ').trim() || 'Yebunna OS');
+}
+
 /** Instructions describing the bot's connections and the rules for using them. */
 export function connectionPrompt(agentId) {
   const parts = [];
@@ -313,7 +327,7 @@ export function connectionPrompt(agentId) {
   }
   const drive = conns().gdrive?.config?.path;
   if (allowed('gdrive', agentId) && drive) {
-    parts.push(`- Google Drive: the founder's Drive is synced at "${drive}". Read files there when useful. Save into Drive only when the task asks to put something in Drive (use a clear subfolder); never delete or overwrite files there unless the task says so.`);
+    parts.push(`- Google Drive: the founder's Drive is synced at "${drive}". Read files there when useful. Don't save your work there yourself: the OS copies every approved deliverable to Drive, organised and version-stamped. Never delete or overwrite files there.`);
   }
   return parts.length ? `\nCONNECTED ACCOUNTS (use them for real work; follow these rules exactly):\n${parts.join('\n')}\n` : '';
 }
