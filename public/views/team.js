@@ -81,7 +81,9 @@ export function newBotDialog() {
   );
 }
 
-/** Edit any bot's name, role, responsibilities/personality, specialties and web access. */
+const runSelect = (name, value, options) => `<select name="${name}">${options.map((o) => `<option ${o === value ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+
+/** Edit any bot's name, role, responsibilities/personality, specialties, model, effort and web access. */
 export function editBotDialog(agentId) {
   const a = S.agentById[agentId];
   const isCeo = agentId === 'ceo';
@@ -102,6 +104,14 @@ export function editBotDialog(agentId) {
       <p class="faint small" style="margin:-6px 0 0">${(a.coreSkills || [])
         .map((n) => (Object.values(S.skills).some((s) => s.name.toLowerCase() === n.toLowerCase()) ? `✓ ${esc(n)}` : `<span style="color:var(--warn)">✕ ${esc(n)} (not installed — add it in Skills)</span>`))
         .join(' · ')}</p>
+      <div class="grid2">
+        <label>Model <small>(${isCeo ? 'reviews, chat, reports' : 'every run of this bot'})</small>${runSelect('model', a.model, ['opus', 'sonnet', 'haiku'])}</label>
+        <label>Effort${runSelect('effort', a.effort, ['low', 'medium', 'high', 'xhigh', 'max'])}</label>
+      </div>
+      ${isCeo ? `<div class="grid2">
+        <label>Planning model <small>(plans and briefs)</small>${runSelect('planModel', a.planModel, ['opus', 'sonnet', 'haiku'])}</label>
+        <label>Planning effort${runSelect('planEffort', a.planEffort, ['low', 'medium', 'high', 'xhigh', 'max'])}</label>
+      </div>` : ''}
       <label class="check"><input type="checkbox" name="web" ${a.web ? 'checked' : ''} /> Can search the web</label>
       <label class="check"><input type="checkbox" name="computer" ${a.computer ? 'checked' : ''} /> 🖥 Computer use — controls a real web browser (open sites, click, type, fill forms)</label>
       ${isCeo ? '<p class="faint small" style="margin:0">The CEO keeps its planning, delegation and review duties whatever you write here.</p>' : ''}

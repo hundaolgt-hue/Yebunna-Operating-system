@@ -62,21 +62,21 @@ test('with no reset time given, it tries again after the check interval (2h)', (
 
 test.after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
-test('the founder always gets a slot: chats jump the queue and use a reserved slot', async () => {
+test('at most two runs at once, and the founder\'s chats jump the queue', async () => {
   const { _slots, runStats } = await import('../src/llm.js');
-  const max = runStats().max;
-  for (let i = 0; i < max; i++) await _slots.acquire(null, false); // the team fills every normal slot
-  let teamGot = false;
-  const team = _slots.acquire(null, false).then(() => (teamGot = true));
-  await _slots.acquire(null, true); // the founder's chat starts immediately
-  assert.equal(runStats().running, max + 1);
-  assert.equal(teamGot, false, 'the team does not get the reserved slot');
-  _slots.release(); // the chat ends
-  await sleep(10);
-  assert.equal(teamGot, false, 'still no normal slot free');
-  _slots.release(); // a task ends → the waiting task starts
+  assert.equal(runStats().max, 2);
+  await _slots.acquire(null, false); // a bot works
+  await _slots.acquire(null, false); // the CEO plans
+  const order = [];
+  const team = _slots.acquire(null, false).then(() => order.push('team'));
+  const chat = _slots.acquire(null, true).then(() => order.push('chat'));
+  assert.equal(runStats().running, 2, 'never more than two');
+  _slots.release();
+  await chat;
+  _slots.release();
   await team;
-  assert.equal(runStats().running, max);
-  for (let i = 0; i < max; i++) _slots.release();
+  assert.deepEqual(order, ['chat', 'team']);
+  _slots.release();
+  _slots.release();
   assert.equal(runStats().running, 0);
 });

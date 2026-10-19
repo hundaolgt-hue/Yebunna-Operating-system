@@ -10,6 +10,7 @@ import { demoStream } from './demo.js';
 import { WORKSPACE, state } from './store.js';
 import { connectionMcpServers, connectionRuntime } from './connections.js';
 import { recordUsage } from './usage.js';
+import { runSettings } from './agents.js';
 import { UsageLimitError, limited, hitLimit, parseReset } from './limits.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
@@ -148,18 +149,17 @@ function toPrompt(messages) {
 }
 
 // ---- run limits --------------------------------------------------------------------
-// Several missions, chats and meetings can be live at once; cap the number of Claude
-// Code processes so a subscription is not rate-limited into failures.
-const MAX_RUNS = Math.max(1, Number(process.env.MAX_CONCURRENT_RUNS || 4));
+// At most two Claude Code processes at once (one specialist + the CEO), so the subscription
+// is never spread over parallel work.
+const MAX_RUNS = Math.min(2, Math.max(1, Number(process.env.MAX_CONCURRENT_RUNS) || 2));
 const RUN_TIMEOUT_MS = Math.max(1, Number(process.env.RUN_TIMEOUT_MINUTES || 45)) * 60_000;
-// The founder never waits behind the team: chats get one extra, reserved slot and go to
-// the front of the queue, so the CEO answers even while every bot is busy.
+// The founder never waits behind the team: chats go to the front of the queue.
 let running = 0;
 const waiting = [];
 export const runStats = () => ({ running, waiting: waiting.length, max: MAX_RUNS });
 export const _slots = { acquire: (...a) => acquire(...a), release: () => releaseSlot() }; // for tests
 async function acquire(signal, priority = false) {
-  if (running < MAX_RUNS + (priority ? 1 : 0)) return void running++;
+  if (running < MAX_RUNS) return void running++;
   await new Promise((resolve, reject) => {
     const entry = { resolve, priority };
     if (priority) waiting.splice(waiting.filter((w) => w.priority).length, 0, entry);
@@ -172,10 +172,9 @@ async function acquire(signal, priority = false) {
   });
 }
 function releaseSlot() {
-  // Hand the slot straight over — but a normal run may only take it if that keeps
-  // normal work within MAX_RUNS (the extra slot is for the founder's chats).
+  // Hand the slot straight over to the next in line (chats first).
   const next = waiting[0];
-  if (next && (next.priority || running - 1 < MAX_RUNS)) {
+  if (next) {
     waiting.shift();
     next.resolve();
   } else running--;
@@ -203,55 +202,20 @@ export class OutOfStepsError extends Error {
  * agentId: which bot is running — picks its own browser profile for computer use.
  * demo:    function returning the scripted answer used in offline demo mode.
  */
-// Usage modes: which model, effort and step budget each kind of work gets.
-//   quality  — everything on your Claude Code default model (usually the biggest).
-//   balanced — the big model only for planning and large tasks; Sonnet for normal work,
-//              Haiku for yes/no reviews and notes. Small tasks get a small step budget.
-//   economy  — no big model at all.
-// [model, effort, steps]; null model = your default; steps scale up for computer use.
-const PROFILES = {
-  balanced: {
-    task: { small: ['sonnet', 'low', 40], medium: ['sonnet', 'medium', 80], large: [null, 'high', 100] },
-    plan: [null, 'high'],
-    report: ['sonnet', 'medium'],
-    chat: ['sonnet', 'medium'],
-    meeting: ['sonnet', 'low'],
-    skill: ['sonnet', 'medium'],
-    review: ['haiku', 'low'],
-    memory: ['haiku', 'low'],
-  },
-  economy: {
-    task: { small: ['haiku', 'low', 30], medium: ['sonnet', 'low', 50], large: ['sonnet', 'medium', 60] },
-    plan: ['sonnet', 'medium'],
-    report: ['haiku', 'low'],
-    chat: ['sonnet', 'low'],
-    meeting: ['haiku', 'low'],
-    skill: ['sonnet', 'low'],
-    review: ['haiku', 'low'],
-    memory: ['haiku', 'low'],
-  },
-};
-const EFFORT = ['low', 'medium', 'high', 'xhigh', 'max'];
-export const usageMode = () => state.settings.usageMode || (state.settings.economy ? 'economy' : 'balanced');
+// Every bot has its own model and effort (Team → Edit; defaults in personas.js), so the
+// subscription is spent where it matters. The task size only sets the step budget.
+const STEPS = { small: 40, medium: 70, large: 100 }; // % of the caller's step budget
 
-export function pick(kind, model, effort, maxTurns, size = 'medium') {
-  const profile = PROFILES[usageMode()];
-  if (!profile) return { model: model || (kind === 'task' && size === 'large' && state.settings.opusForLarge ? 'opus' : MODEL), effort, maxTurns };
-  // "Opus for large tasks": heavy work gets Opus at full effort whatever the mode.
-  if (kind === 'task' && size === 'large' && state.settings.opusForLarge) return { model: model || 'opus', effort, maxTurns };
-  const p = kind === 'task' ? profile.task[size] || profile.task.medium : profile[kind];
-  if (!p) return { model: model || MODEL, effort, maxTurns };
-  const [m, e, steps] = p;
-  return {
-    model: model || m || MODEL,
-    // Never raise effort above what the caller asked for.
-    effort: EFFORT[Math.min(EFFORT.indexOf(effort), EFFORT.indexOf(e))] || e,
-    maxTurns: steps ? Math.round((steps * maxTurns) / 100) : maxTurns,
-  };
+export function pick(kind, model, effort, maxTurns, size = 'medium', agentId) {
+  const steps = kind === 'task' ? STEPS[size] || STEPS.medium : 100;
+  const budget = Math.round((steps * maxTurns) / 100);
+  if (model) return { model, effort, maxTurns: budget }; // an explicit model (e.g. haiku for notes) wins
+  const r = runSettings(agentId, kind);
+  return { model: r.model || MODEL, effort: r.effort || effort, maxTurns: budget };
 }
 
 export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo }) {
-  ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size));
+  ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size, agentId));
   if (demoMode) {
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;

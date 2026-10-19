@@ -52,7 +52,6 @@ before(async () => {
       PORT: String(PORT),
       DATA_DIR: path.join(TMP, 'data'),
       WORKSPACE_DIR: path.join(TMP, 'workspace'),
-      MAX_PARALLEL_TASKS: '4',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -76,7 +75,7 @@ test('meta reports the demo engine and the team', async () => {
 
 test('Higgsfield connection belongs to the Creative Director', async () => {
   const meta = (await api('GET', '/api/meta')).body;
-  assert.ok(meta.agents.some((a) => a.id === 'creative' && a.role === 'Creative Director'));
+  assert.ok(meta.agents.some((a) => a.id === 'creative' && a.role === 'Creative Director (Video)'));
   const hf = (await api('GET', '/api/connections')).body.find((c) => c.id === 'higgsfield');
   assert.ok(hf, 'listed on the Connections page');
   assert.deepEqual(hf.bots, ['creative', 'design']);

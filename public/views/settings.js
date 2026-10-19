@@ -3,7 +3,6 @@ import { S, $$, api, esc, view, toast, Recognition } from '../core.js';
 export function renderSettings() {
   const p = S.provider || {};
   const st = S.settings;
-  const mode = st.usageMode || (st.economy ? 'economy' : 'balanced');
   view().innerHTML = `<div class="page narrow">
     <div class="page-head"><h2>Settings</h2></div>
     <section class="settings">
@@ -28,12 +27,11 @@ export function renderSettings() {
     </section>
     <section class="settings">
       <h3>Usage</h3>
-      <p class="side-text">Bots run on your Claude plan, so their work counts toward the same limits as your own chats. Every mission is many separate runs (plan, each task, each review, memory notes, the report). This shows where your usage goes.</p>
-      <label class="setting"><span><b>Usage mode</b><small>${esc(MODES[mode][1])}</small></span>
-        <select class="select-sm" data-usage-mode>${Object.entries(MODES).map(([v, [l]]) => `<option value="${v}" ${mode === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label class="setting"><span><b>Opus for large tasks</b><small>Large tasks (code, spreadsheet models, deep research, long browser work) always run on Opus at full effort, whatever the usage mode — e.g. Economy for everything else, Opus for the heavy work. Pick “Large” when you assign a task yourself to send it to Opus.</small></span>
-        <label class="switch"><input type="checkbox" data-set="opusForLarge" ${st.opusForLarge ? 'checked' : ''}/><span></span></label></label>
-      <p class="faint small">The CEO sizes every task small, medium or large. The deadline only sets the order work is done in; it never makes a bot work longer or use more.</p>
+      <p class="side-text">Bots run on your Claude plan. Each bot has its own model and effort, so the big model is only used where it pays off. One bot works at a time (plus the CEO), in order. The task size (small, medium, large) only sets how many steps a bot may take.</p>
+      <table class="usage-table"><tr><th>Bot</th><th>Model</th><th>Effort</th></tr>${S.agents
+        .map((a) => `<tr><td>${esc(a.name)} <span class="faint">${esc(a.role)}</span></td><td>${pickSel(a.id, 'model', a.model, MODELS)}${a.planModel ? `<br/><small class="faint">planning:</small> ${pickSel(a.id, 'planModel', a.planModel, MODELS)}` : ''}</td><td>${pickSel(a.id, 'effort', a.effort, EFFORTS)}${a.planModel ? `<br/><small class="faint">planning:</small> ${pickSel(a.id, 'planEffort', a.planEffort, EFFORTS)}` : ''}</td></tr>`)
+        .join('')}</table>
+      <p class="faint small">Memory notes use Haiku. Meetings use each bot's model at low effort.</p>
       ${usageTable()}
     </section>
     <section class="settings">
@@ -44,11 +42,10 @@ export function renderSettings() {
     <section class="settings">
       <h3>Engine</h3>
       <div class="kv"><span>Running on</span><b>${p.name === 'demo' ? 'Offline demo (Claude Code not found)' : `Claude via Claude Code ${esc(p.cli || '')}`}</b></div>
-      <div class="kv"><span>Model</span><b>${esc(MODES[mode][0])}${mode !== 'economy' ? ` · big model: ${esc(p.model === 'default' ? 'your Claude Code default' : p.model || '')}` : ''}</b></div>
       <div class="kv"><span>Claude runs right now</span><b data-runs>…</b></div>
       <div class="kv"><span>Billing</span><b>${p.name === 'demo' ? '—' : 'Your Claude subscription (no API key)'}</b></div>
       <div class="kv"><span>Workspace</span><code>${esc(S.workspace)}</code></div>
-      <p class="faint small">Change the model or parallelism in the <code>.env</code> file (see README) and restart.</p>
+      <p class="faint small">Set each bot's model and effort under Usage above (or Team → Edit).</p>
     </section>
     <section class="settings">
       <h3>Voice</h3>
@@ -60,7 +57,7 @@ export function renderSettings() {
   api('/api/health')
     .then((h) => {
       const el = document.querySelector('[data-runs]');
-      if (el) el.textContent = `${h.runs.running} busy of ${h.runs.max} (+1 kept free for your chats) · ${h.runs.waiting} waiting${h.telegram.lastError ? ` · Telegram: ${h.telegram.lastError}` : ''}`;
+      if (el) el.textContent = `${h.runs.running} busy of ${h.runs.max} (your chats go first) · ${h.runs.waiting} waiting${h.telegram.lastError ? ` · Telegram: ${h.telegram.lastError}` : ''}`;
     })
     .catch(() => {});
   const put = (body) =>
@@ -69,7 +66,13 @@ export function renderSettings() {
       .catch((e) => toast(e.message));
   $$('[data-set-inv]').forEach((el) => el.addEventListener('change', () => put({ [el.dataset.setInv]: !el.checked })));
   $$('[data-browser]').forEach((el) => el.addEventListener('change', () => put({ browser: el.value })));
-  $$('[data-usage-mode]').forEach((el) => el.addEventListener('change', () => put({ usageMode: el.value }).then(renderSettings)));
+  $$('[data-run]').forEach((el) =>
+    el.addEventListener('change', () =>
+      api(`/api/agents/${el.dataset.run}`, { method: 'PUT', body: { [el.dataset.field]: el.value } })
+        .then(() => toast('Saved.'))
+        .catch((e) => toast(e.message)),
+    ),
+  );
   $$('[data-computer]').forEach((b) =>
     b.addEventListener('click', () =>
       api('/api/agents/computer', { method: 'POST', body: { enabled: b.dataset.computer === '1' } })
@@ -86,11 +89,10 @@ export function renderSettings() {
   );
 }
 
-const MODES = {
-  balanced: ['Balanced (recommended)', 'Your big model only plans missions and does large tasks. Normal tasks, chats, meetings and reports use Sonnet; CEO reviews and memory notes use Haiku. Small tasks get a small step budget.'],
-  quality: ['Quality', 'Everything runs on your Claude Code default model at full effort. Best results, uses your limit fastest.'],
-  economy: ['Economy', 'No big model: Sonnet for most work, Haiku for small tasks, reviews, meetings and notes, with low effort. Uses the least.'],
-};
+const MODELS = ['opus', 'sonnet', 'haiku'];
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const pickSel = (id, field, value, options) =>
+  `<select class="select-sm" data-run="${esc(id)}" data-field="${field}">${options.map((o) => `<option ${o === value ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
 
 const n = (x) => (x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x || 0));
 const KIND = { task: 'Tasks', chat: 'Chats', plan: 'CEO planning', review: 'CEO reviews', report: 'Reports', meeting: 'Meetings', memory: 'Memory notes', skill: 'Skills', other: 'Other' };

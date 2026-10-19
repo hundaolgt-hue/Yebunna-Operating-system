@@ -3,17 +3,18 @@
 import { state, save, newId, now } from './store.js';
 import { connectionTools, connectionPrompt } from './connections.js';
 import { playbookPrompt } from './playbook.js';
-import { PERSONAS, CORE_SKILLS } from './personas.js';
+import { PERSONAS, CORE_SKILLS, RUN_SETTINGS, HOUSEKEEPING, MODELS, EFFORTS } from './personas.js';
 
-const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products
-(SaaS tools, templates, courses, ebooks, apps, Notion kits, design assets, communities).
-You are part of a team of AI agents run by a CEO who delegates work with hard deadlines.
-Be concrete, decisive and practical. Produce real, usable work — not descriptions of work.
-QUALITY BAR: no generic, padded or sloppy output, ever. Every deliverable is specific to this product,
-this buyer and this market; uses real facts, numbers and sources (or clearly labelled estimates); is
-checked by you before you hand it in; and would impress a demanding founder. If you can't meet the bar
-with what you have, say exactly what is missing instead of filling the gap with filler.
-Use Markdown: short headings, bullet lists, tables where useful, and code blocks for code.`;
+const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products, in a team of
+AI agents run by a CEO. Produce real, usable work, not descriptions of work. No generic or padded output:
+specific to this product, buyer and market, with real facts and sources (or labelled estimates), checked by
+you before hand-in. If something is missing, say exactly what instead of filling the gap.
+
+HOW YOU WRITE (every message: to the founder, the CEO or teammates)
+- Telegraphic: results, numbers, decisions, file paths. No preamble, no recap of the brief or the inputs,
+  no restating what a teammate wrote, no closing summary, no offers of more help.
+- Say each thing once. If it is in a file, give the path instead of repeating it.
+- Do the work in files; your messages only point to them.`;
 
 // Every agent can read and write files in the shared workspace (Grok Bot's shared
 // cloud computer). Some also get live web access, like Grok's real-time search.
@@ -41,7 +42,7 @@ const BUILTIN = [
     name: 'Nova',
     role: 'Market Research Analyst',
     color: '#60a5fa',
-    specialties: ['Market sizing', 'Competitor teardown', 'Customer personas', 'Trend analysis'],
+    specialties: ['Demand & supply evidence', 'Competitor teardown', 'Niche scoring', 'Buyer quotes'],
   },
   {
     id: 'product',
@@ -50,7 +51,7 @@ const BUILTIN = [
     name: 'Orion',
     role: 'Product Manager',
     color: '#a78bfa',
-    specialties: ['PRDs', 'MVP scoping', 'Roadmaps', 'User stories'],
+    specialties: ['Product spec', 'MVP scope', 'Structure & logic', 'Acceptance tests'],
   },
   {
     id: 'engineer',
@@ -59,16 +60,16 @@ const BUILTIN = [
     name: 'Forge',
     role: 'Lead Engineer',
     color: '#34d399',
-    specialties: ['Architecture', 'Full-stack code', 'Automation', 'Integrations'],
+    specialties: ['Excel & Sheets models', 'Code', 'Automations', 'Verification'],
   },
   {
     id: 'design',
     persona: PERSONAS.design,
     coreSkills: CORE_SKILLS.design,
     name: 'Pixel',
-    role: 'Brand & UX Designer',
+    role: 'Brand & Visual Designer',
     color: '#f472b6',
-    specialties: ['Brand identity', 'UI/UX flows', 'Design systems', 'Landing pages'],
+    specialties: ['Brand system', 'Product mockups', 'Ad stills & thumbnails', 'Posters'],
   },
   {
     id: 'creative',
@@ -76,9 +77,9 @@ const BUILTIN = [
     coreSkills: CORE_SKILLS.creative,
     tools: [...FILES, ...WEB],
     name: 'Vega',
-    role: 'Creative Director',
+    role: 'Creative Director (Video)',
     color: '#e879f9',
-    specialties: ['Creative direction', 'Ad creatives', 'AI images & video', 'Visual storytelling'],
+    specialties: ['Video concepts & scripts', 'Motion graphics', 'AI video (Higgsfield)', 'Tutorial videos'],
   },
   {
     id: 'landing',
@@ -88,7 +89,7 @@ const BUILTIN = [
     name: 'Lumen',
     role: 'Landing Page & Conversion Lead',
     color: '#4ade80',
-    specialties: ['High-converting landing pages', 'Tutorial & ad videos on the page', 'Ye-Buna checkout funnels', 'Meta Pixel & Vercel'],
+    specialties: ['Landing page copy & build', 'Ye-Buna checkout', 'Meta Pixel', 'Vercel deploy'],
   },
   {
     id: 'marketing',
@@ -98,7 +99,7 @@ const BUILTIN = [
     name: 'Echo',
     role: 'Growth Marketer',
     color: '#fbbf24',
-    specialties: ['Copywriting', 'Launch plans', 'SEO & content', 'Social & ads'],
+    specialties: ['Ad copy', 'Meta campaign setup', 'Campaign results', 'Test plans'],
   },
   {
     id: 'sales',
@@ -108,7 +109,7 @@ const BUILTIN = [
     name: 'Ledger',
     role: 'Revenue & Finance Lead',
     color: '#fb923c',
-    specialties: ['Pricing', 'Unit economics', 'Financial models', 'Sales funnels'],
+    specialties: ['Price & offer', 'Unit economics', 'Break-even', 'Projections'],
   },
   {
     id: 'support',
@@ -117,16 +118,32 @@ const BUILTIN = [
     name: 'Harbor',
     role: 'Customer Success Lead',
     color: '#22d3ee',
-    specialties: ['Onboarding', 'Help docs & FAQ', 'Email sequences', 'Feedback loops'],
+    specialties: ['Written tutorial', 'FAQ & troubleshooting', 'Buyer replies', 'After-sale emails'],
   },
 ];
 
 // Every built-in can read and write files and search the web; the CEO only checks facts and files.
-for (const a of BUILTIN) a.tools ||= [...FILES, ...WEB];
+for (const a of BUILTIN) {
+  a.tools ||= [...FILES, ...WEB];
+  Object.assign(a, RUN_SETTINGS[a.id]);
+}
 
 const COLORS = ['#c084fc', '#2dd4bf', '#f87171', '#a3e635', '#818cf8', '#fda4af', '#facc15', '#38bdf8'];
 
 const baseTools = () => FILES;
+
+/**
+ * The model and effort a bot runs on for this kind of work. The CEO plans and briefs on its
+ * planning model; meetings use the bot's model at low effort; housekeeping uses the smallest model.
+ */
+export function runSettings(agentId, kind) {
+  if (kind === 'memory') return HOUSEKEEPING;
+  const a = getAgent(agentId);
+  if (!a) return { model: 'sonnet', effort: 'medium' };
+  if (kind === 'plan' && a.planModel) return { model: a.planModel, effort: a.planEffort || a.effort || 'high' };
+  const model = a.model || 'sonnet';
+  return { model, effort: ['meeting', 'retro', 'standup'].includes(kind) ? 'low' : a.effort || 'medium' };
+}
 
 /** Built-ins with any edits from the UI applied on top. */
 function withOverrides(a) {
@@ -164,6 +181,8 @@ export function createAgent({ name, role, description, specialties = [], web = f
     persona: `You are ${name}, the team's ${role}. ${description || ''}`.trim(),
     tools: web ? [...FILES, ...WEB] : FILES,
     computer: Boolean(computer),
+    model: 'sonnet',
+    effort: 'medium',
     custom: true,
     createdAt: now(),
   };
@@ -173,8 +192,11 @@ export function createAgent({ name, role, description, specialties = [], web = f
 }
 
 /** Edit any bot's name, role, responsibilities/personality, specialties and web access. */
-export function updateAgent(id, { name, role, persona, specialties, web, computer, coreSkills }) {
+export function updateAgent(id, { name, role, persona, specialties, web, computer, coreSkills, model, effort, planModel, planEffort }) {
   const patch = {};
+  for (const [k, v, allowed] of [['model', model, MODELS], ['planModel', planModel, MODELS], ['effort', effort, EFFORTS], ['planEffort', planEffort, EFFORTS]]) {
+    if (v !== undefined && allowed.includes(v)) patch[k] = v;
+  }
   if (name !== undefined) patch.name = String(name).trim().slice(0, 40) || undefined;
   if (role !== undefined) patch.role = String(role).trim().slice(0, 80) || undefined;
   if (persona !== undefined) patch.persona = String(persona).trim().slice(0, 12000) || undefined;
@@ -270,7 +292,7 @@ export function coreSkillsOf(agent) {
 export function skillCatalog() {
   return Object.values(state.skills)
     .filter((s) => s.status === 'active' && !s.house)
-    .map((s) => `- ${s.name}: ${String(s.summary || '').slice(0, 140)}${s.path ? ` → ${s.path}` : ' (written skill)'}`)
+    .map((s) => `- ${s.name}: ${String(s.summary || '').replace(/\s+/g, ' ').slice(0, 80)}`)
     .join('\n');
 }
 
@@ -291,81 +313,56 @@ export function resolveAgent(ref) {
 
 export function roster() {
   return allAgents()
-    .map((a) => {
-      const skills = agentSkills(a.id).map((s) => s.name);
-      const shown = skills.slice(0, 8).join(', ') + (skills.length > 8 ? ` +${skills.length - 8} more` : '');
-      return `- ${a.id}: ${a.name}, ${a.role} — ${a.specialties.join(', ')}${skills.length ? ` | skills: ${shown}` : ''}`;
-    })
+    .map((a) => `- ${a.id}: ${a.name}, ${a.role}`)
     .join('\n');
 }
 
+/**
+ * Memory that goes into a bot's prompt: only standing facts and preferences the founder gave
+ * (never notes about past missions — each mission starts clean; lessons live in the playbook).
+ */
+export const standingMemory = (agentId) => (state.memory[agentId] || []).filter((m) => !String(m.source).startsWith('task')).slice(-10);
+
 export function systemPrompt(agent) {
-  const memory = (state.memory[agent.id] || []).slice(-15);
+  const memory = standingMemory(agent.id);
   const owned = agentSkills(agent.id);
-  // Written skills are included in full: house standards always, plus the latest six others.
-  const skills = [...owned.filter((s) => s.house), ...owned.filter((s) => !s.path && !s.house).slice(-6)];
+  // House standards are always included in full. Other written skills are listed by name;
+  // a task that needs one gets its full text in the assignment.
+  const house = owned.filter((s) => s.house);
+  const written = owned.filter((s) => !s.path && !s.house);
   const core = coreSkillsOf(agent);
-  const coreNames = new Set(core.map((c) => c.name.toLowerCase()));
-  const library = owned.filter((s) => s.path && !coreNames.has(s.name.toLowerCase())).slice(0, 80); // skill packs: read on demand
   return `${agent.persona}
 ${
     core.length
-      ? `\nYOUR CORE SKILLS: use them on every task where they apply. Before you start, open the SKILL.md of each one
-that applies (Read tool), then follow it. They are not optional.
-${core.map((c) => (c.skill ? `- ${c.skill.name}: ${String(c.skill.summary).slice(0, 160)} → ${c.skill.path || '(written skill: see below)'}` : `- ${c.name}: not installed on this PC yet; work without it and mention that in your deliverable`)).join('\n')}\n`
+      ? `\nCORE SKILLS: open the SKILL.md of each one that applies (Read) before you start, and follow it.
+${core.map((c) => (c.skill ? `- ${c.skill.name} → ${c.skill.path || '(written skill: see below)'}` : `- ${c.name}: not installed; work without it and say so`)).join('\n')}\n`
       : ''
   }
-
 ${COMPANY}
-${playbookPrompt()}${agent.tools.includes('WebSearch') ? '\nYou can search the web for current, real-world data. Use it when facts matter, cite sources inline, and never narrate your searching — output only the finished work.\n' : ''}${
+${playbookPrompt()}${agent.tools.includes('WebSearch') ? '\nWeb: search when facts matter; cite sources inline; never narrate your searching.\n' : ''}${
     agent.computer
-      ? `\nCOMPUTER USE: you control a real web browser through the browser_* tools (navigate, click, type, fill forms,
-select, upload, take snapshots and screenshots, manage tabs). Use it when a website has no API, to check how a
-page really looks, or to operate web apps. Read the page snapshot before acting. Rules (approval boundaries):
-- Never buy anything, send messages or emails, publish or post, delete data, or change account or billing
-  settings unless your assignment explicitly tells you to do exactly that.
-- Never type passwords, 2FA codes or payment details, and never try to solve CAPTCHAs. If a site needs a
-  login, stop and say which site the founder must log into with the "Log in to a site" button on your page.
-- Close tabs you opened when you are done, and report what you did in the browser.\n`
+      ? `\nBROWSER (browser_* tools): use it for sites without an API. Read the snapshot before acting. Never buy, send,
+publish, post, delete, or change account or billing settings unless the task says exactly that. Never type
+passwords, 2FA or payment details, never solve CAPTCHAs: if a login is needed, stop and name the site for the
+founder ("Log in to a site"). Close the tabs you opened.\n`
       : ''
   }${
     state.settings.terminal
-      ? `\nTERMINAL: you can run shell commands (Bash) in the workspace folder — e.g. run Python scripts to build,
-recalculate and check spreadsheets (openpyxl/pandas), process data, or test code — so the founder doesn't have
-to open the files to verify your work. Check results yourself before you report them. Never run destructive
-commands, never touch files outside the workspace, never install software globally (a local
-"pip install --user" or a project virtualenv is fine when needed), and never run anything that sends
-messages, publishes, or spends money. Clean up after yourself: delete temporary files you created
-(rendered frames, caches, test downloads) once the task is done, and keep only the deliverables.\n`
+      ? `\nTERMINAL (Bash, in the workspace): run scripts to build and check your work. Nothing destructive, nothing
+outside the workspace, no global installs, nothing that sends, publishes or spends. Delete your temp files.\n`
       : ''
   }
-Your current directory is the company's shared workspace. Teammates' files live there too
-(missions/<mission>/...). Read them when useful. The founder's reference samples (images, videos,
-documents) are in references/<date>/: when a task mentions references, samples, examples or "this style",
-study them first. Look at images with the Read tool; for a video, extract about 1 frame per second with
-ffmpeg into a temp folder, Read the frames, then delete them. Save real artifacts you create (code, copy, data,
-docs) as files in the folder your assignment names. Never touch files outside the workspace.
-
-Your team (id: name, role — specialties):
-${roster()}
-${memory.length ? `\nYour memory (preferences and summaries of past work — verify changing facts at the source):\n${memory.map((m) => `- ${m.text}`).join('\n')}\n` : ''}${
-    skills.length
-      ? `\nYour skills (follow the matching skill's steps, rules and approval boundaries when it applies):\n${skills.map((s) => `### Skill: ${s.name}\n${s.summary}\n${s.body}`).join('\n\n')}\n`
-      : ''
-  }${
-    library.length
-      ? `\nYour skill library. Before starting work, check this list: when a skill matches the task, use the Read tool
-to open its SKILL.md (and any files it points to) and follow it. Skills marked with ⚙ may need the terminal.
-${library.map((s) => `- ${s.name}: ${String(s.summary).slice(0, 150)} → ${s.path}`).join('\n')}\n`
-      : ''
-  }${connectionPrompt(agent.id)}${
-    agent.id === 'ceo'
-      ? '\nAs CEO you never do specialist work yourself (no writing copy, code, designs, research or spreadsheets). Your tools are for checking the team\'s files and facts. When the founder asks for work, it gets delegated to the team.\n'
-      : ''
+Workspace: your current directory. Teammates' files are in missions/<mission>/. The founder's samples are in
+references/<date>/: study them when the task mentions references or a style (images with Read; videos: ffmpeg
+~1 frame/s to a temp folder, Read, delete). Never touch files outside the workspace.
+${agent.id === 'ceo' ? `\nYour team (id: name, role):\n${roster()}\n` : ''}${memory.length ? `\nStanding facts from the founder:\n${memory.map((m) => `- ${m.text}`).join('\n')}\n` : ''}${
+    house.length ? `\n${house.map((s) => `### Standard: ${s.name}\n${s.body}`).join('\n\n')}\n` : ''
+  }${written.length ? `\nYour written skills (the task includes the full text when it needs one): ${written.map((s) => s.name).join(', ')}\n` : ''}${connectionPrompt(agent.id)}${
+    agent.id === 'ceo' ? "\nYou never do specialist work yourself; your tools are for checking the team's files and facts.\n" : ''
   }`;
 }
 
 export function publicAgent(a) {
-  const { id, name, role, color, specialties, tools = [], custom = false, edited = false, computer = false, coreSkills = [] } = a;
-  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), computer, custom, edited, persona: a.persona, coreSkills };
+  const { id, name, role, color, specialties, tools = [], custom = false, edited = false, computer = false, coreSkills = [], model = 'sonnet', effort = 'medium', planModel, planEffort } = a;
+  return { id, name, role, color, specialties, web: tools.includes('WebSearch'), computer, custom, edited, persona: a.persona, coreSkills, model, effort, planModel, planEffort };
 }

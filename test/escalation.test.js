@@ -51,7 +51,6 @@ before(async () => {
       PORT: String(PORT),
       DATA_DIR: path.join(TMP, 'data'),
       WORKSPACE_DIR: path.join(TMP, 'workspace'),
-      MAX_PARALLEL_TASKS: '4',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

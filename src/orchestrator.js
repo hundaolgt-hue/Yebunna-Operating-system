@@ -1,8 +1,9 @@
 // The CEO loop: plan → (optional founder approval) → delegate with deadlines →
-// agents work in the shared workspace (in parallel where dependencies allow,
-// earliest deadline first) → CEO review → (optional founder approval) → mission
-// report. A watchdog escalates anything that misses its deadline, and every
-// finished task is filed in the workspace and summarised into the agent's memory.
+// agents work in the shared workspace ONE TASK AT A TIME across the company, in the
+// order the CEO planned (oldest mission first) → CEO review → (optional founder
+// approval) → short handover to the next task → mission report. A watchdog escalates
+// anything that misses its deadline. Founder changes to assigned work edit that task
+// (new brief or redo) instead of creating new tasks.
 //
 // Robustness rules: a mission never silently stops. Follow-ups and questions that
 // fail don't kill the mission, runs that hit their step budget are finished or
@@ -10,7 +11,7 @@
 // falls back to a written summary if the CEO can't produce one.
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAgent, systemPrompt, remember, toolsFor, resolveAgent, specialists, skillCatalog, skillByName } from './agents.js';
+import { getAgent, systemPrompt, toolsFor, resolveAgent, specialists, skillCatalog, skillByName } from './agents.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, newId, now, slugify, WORKSPACE } from './store.js';
 import { bus } from './bus.js';
@@ -22,7 +23,6 @@ import { notifyFounder } from './telegram.js';
 
 export { bus };
 
-const MAX_PARALLEL = Number(process.env.MAX_PARALLEL_TASKS || 3);
 const MAX_REVISIONS = Number(process.env.MAX_REVISIONS || 1);
 const ceo = () => getAgent('ceo');
 // The CEO manages; it inspects work but never produces specialist deliverables itself.
@@ -89,26 +89,18 @@ const OPEN = ['queued', 'in_progress', 'review', 'approval', 'blocked', 'founder
 const MAX_UNBLOCKS = 2; // CEO attempts per task before it goes to the founder
 
 // What every brief must contain before a bot may start (the CEO's briefing standard).
-const briefingStandard = () => `BRIEFING STANDARD: a bot starts only when its task is abundantly clear. Each brief is a complete
-prompt for a specialist who knows nothing else, containing:
-1. Objective and why it matters for the business.
-2. Context and inputs: teammates' files by path (missions/...), the founder's references (references/...),
-   facts, numbers, decisions already made.
-3. Approach: the steps you expect, in order, and the quality bar ("excellent" looks like ...).
-4. Skills: pick the best skills for the task from the catalog below, by exact name; the bot opens and
-   follows them. If nothing in the catalog fits, name the capability needed and tell the bot to search for
-   a skill with find-skills (skills.sh, \`npx skills find <topic>\`), install it into .skills/ and use it.
-5. Acceptance criteria: at least 3 checkable criteria you will review against.
-6. Deliverable: exact files, formats, sizes, language. Boundaries: no spending, posting or publishing
-   unless the founder asked.
+const briefingStandard = () => `BRIEF STANDARD (complete, no filler): 1) objective and why; 2) inputs: file paths
+(missions/..., references/...), facts, decisions made; 3) steps and the quality bar; 4) skills: exact names from
+the catalog (none fits → tell the bot to find one with find-skills); 5) 3+ checkable acceptance criteria;
+6) exact deliverable (files, format, language). No spending, posting or publishing unless the founder asked.
 
-SKILL CATALOG (installed; name: what it does → file):
+SKILL CATALOG (name: what it does):
 ${skillCatalog() || '- (no skills installed yet)'}`;
 
 /** Tasks whose brief isn't clear enough to start (too short, no acceptance criteria). */
 function unclearTasks(tasks) {
   return tasks
-    .filter((t) => String(t.brief || '').length < 300 || !Array.isArray(t.acceptance) || t.acceptance.length < 2)
+    .filter((t) => String(t.brief || '').length < 200 || !Array.isArray(t.acceptance) || t.acceptance.length < 2)
     .map((t) => `"${t.title || t.key}"`);
 }
 
@@ -154,7 +146,7 @@ function teamList() {
     .map((a) => {
       const linked = connectedServices(a.id);
       const extra = [...linked, ...(a.computer ? ['a web browser (computer use)'] : []), ...(state.settings.terminal ? ['terminal'] : [])];
-      return `- "${a.id}" = ${a.name}, ${a.role}: ${a.specialties.join(', ')}${extra.length ? ` · can use: ${extra.join(', ')}` : ''}`;
+      return `- "${a.id}" = ${a.name}, ${a.role}${extra.length ? ` · can use: ${extra.join(', ')}` : ''}`;
     })
     .join('\n');
 }
@@ -182,6 +174,7 @@ function newMission({ goal, deadline, source = 'founder' }) {
 
 export function createMission({ goal, deadline, source }) {
   const m = newMission({ goal, deadline, source });
+  if (!source || source === 'founder') state.ceoContextAt = m.createdAt; // a new product: the CEO chat starts fresh
   addThread(m, { role: 'user', kind: 'text', text: goal });
   plan(m).catch((e) => {
     fail(m, e);
@@ -321,6 +314,7 @@ export function cancelMission(m) {
   }
   m.status = 'cancelled';
   addThread(m, { role: 'ceo', kind: 'escalation', text: 'Mission cancelled. All open tasks were stopped.' });
+  setTimeout(dispatch, 0); // the next mission in line goes on
 }
 
 export function deleteMission(m) {
@@ -380,7 +374,7 @@ function addTasks(m, item, specs) {
   if (!valid.length) throw new Error(`No valid assignments in the plan${dropped.length ? ` (could not match: ${dropped.join(', ')})` : ''}.`);
   for (const s of valid) keyToId[s.key] = newId('task');
 
-  for (const s of valid) {
+  for (const s of inOrder(valid)) {
     const due = Math.min(deadlineMs, Date.now() + Math.max(0.1, Number(s.due_in_hours) || 1) * 36e5);
     const t = {
       id: keyToId[s.key],
@@ -410,45 +404,58 @@ function addTasks(m, item, specs) {
   return dropped;
 }
 
+/** Tasks run one at a time in plan order: make sure each comes after the tasks it depends on. */
+function inOrder(specs) {
+  const byKey = new Map(specs.map((s) => [s.key, s]));
+  const out = [];
+  const seen = new Set();
+  const visit = (s) => {
+    if (seen.has(s.key)) return;
+    seen.add(s.key);
+    for (const k of s.depends_on || []) if (byKey.has(k)) visit(byKey.get(k));
+    out.push(s);
+  };
+  specs.forEach(visit);
+  return out;
+}
+
 async function plan(m, instruction) {
   m.status = 'planning';
   emitMission(m);
   const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [] });
 
   const existing = missionTasks(m)
-    .map((t) => `- [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}`)
+    .map((t) => `- id ${t.id} [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}`)
     .join('\n');
-  const team = teamList();
-  const prompt = `Founder's goal: ${m.goal}
-Current time: ${fmt(now())}
-Mission deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} hours from now)
-${existing ? `\nTasks already delegated:\n${existing}\n` : ''}
-${instruction ? `New instruction from the founder: ${instruction}\nPlan ONLY the additional work this instruction needs.` : 'Break this goal into the work needed to ship it.'}
+  const prompt = `Product / mission: ${m.goal}
+Now: ${fmt(now())} · deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} h left)
+${existing ? `\nTasks already assigned in this mission:\n${existing}\n` : ''}
+${
+    instruction
+      ? `The founder says: ${instruction}
+First decide what this is. If it changes, corrects or adds detail to work already assigned, put it in "edits"
+(by task id) and add NO task for it. Add a task only for genuinely new work no existing task covers. "tasks"
+may be empty.`
+      : 'Plan the work to ship this product.'
+  }
 
-You are the manager: you do NOT do the work yourself. Delegate every piece of work to the specialist
-whose role and specialties fit it best. Spread the work across the team — each task goes to exactly one
-specialist, and no specialist should get work outside their role when a better-suited teammate exists.
-Your specialists (use the quoted id in "agent"):
-${team}
+Tasks run ONE AT A TIME, in the order you list them; each starts only after the previous one is reviewed
+and handed over. Order them so every task has its inputs. Assign each task to the one specialist who owns
+that kind of deliverable (your ownership map). Specialists (use the quoted id in "agent"):
+${teamList()}
 
-Give each task a realistic deadline in hours from now that fits inside the mission deadline, leaving time
-for dependencies. Give each task a size — it decides how much of the founder's Claude usage it may spend:
-"small" = a quick, short piece (a few posts, a list, a short email, a check, a summary of given input);
-"medium" = a normal deliverable (a plan, a document, a page of copy, light research);
-"large" = heavy work only (code or a multi-file build, a spreadsheet model, deep multi-source research,
-long browser work). Most tasks are small or medium; use large only when the task really needs it. Keep it to ${instruction ? '1–3' : '3–7'} focused tasks. Use depends_on (task keys) when a
-task needs another's output: think through the order first, so every task has its inputs when it starts.
+Each task: a deadline in hours from now inside the mission deadline, and a size (sets its step budget):
+"small" (a list, a check, short copy), "medium" (a document, a page, light research), "large" (code, a
+spreadsheet model, deep research, video). ${instruction ? '0–3' : '3–6'} tasks.
 
 ${briefingStandard()}
 
-Reply with ONLY a JSON object, no other text:
-{"summary": "<2–4 sentence message to the founder: the strategy in one line, then who does what, in what order>",
- "tasks": [{"key": "t1", "agent": "<specialist id>", "title": "<short imperative>",
-            "brief": "<the complete brief: objective and why, context, step-by-step approach, quality bar>",
-            "inputs": ["<file paths or facts the bot must use>"],
-            "skills": ["<exact skill names from the catalog>"],
-            "acceptance": ["<checkable criterion>", "..."],
-            "deliverable": "<the concrete files/artifact to hand back, with format>", "due_in_hours": <number>, "size": "small" | "medium" | "large", "depends_on": ["<key>"]}]}`;
+Reply with ONLY JSON:
+{"summary": "<1–2 short sentences for the founder: what happens, in what order>",
+ "edits": [{"task": "<existing task id>", "change": "<the change, complete and specific>"}],
+ "tasks": [{"key": "t1", "agent": "<specialist id>", "title": "<short imperative>", "brief": "<the brief>",
+            "inputs": ["<paths or facts>"], "skills": ["<exact skill names>"], "acceptance": ["<criterion>", "..."],
+            "deliverable": "<files and format>", "due_in_hours": <number>, "size": "small" | "medium" | "large", "depends_on": ["<key>"]}]}`;
 
   let parsed;
   let retry = '';
@@ -459,13 +466,16 @@ Reply with ONLY a JSON object, no other text:
       effort: 'high',
       json: true,
       kind: 'plan',
+      agentId: 'ceo',
       tools: CEO_TOOLS, // read teammates' files and skills, look up skills on the web
       maxTurns: 25,
       demo: () => demoPlan(m.goal, hoursLeft(m), instruction),
     });
     try {
       parsed = extractJson(raw);
-      if (!Array.isArray(parsed.tasks) || !parsed.tasks.length) throw new Error('The plan had no tasks.');
+      parsed.tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      parsed.edits = (Array.isArray(parsed.edits) ? parsed.edits : []).filter((e) => state.tasks[e?.task]?.missionId === m.id && e.change);
+      if (!parsed.tasks.length && !(instruction && parsed.edits.length)) throw new Error('The plan had no tasks.');
       // Clarity gate: no task starts on a vague brief.
       const thin = unclearTasks(parsed.tasks);
       if (thin.length && attempt < 3) {
@@ -478,14 +488,25 @@ Reply with ONLY a JSON object, no other text:
       retry = '\n\nYour previous reply was not valid JSON. Reply with the JSON object only.';
     }
   }
-  const dropped = addTasks(m, item, parsed.tasks);
-  item.text = String(parsed.summary || 'Plan ready. Delegating now.') + (dropped.length ? `\n\n_(Skipped ${dropped.length} item(s) I couldn't match to a teammate.)_` : '');
+  for (const e of parsed.edits) amendTask(state.tasks[e.task], String(e.change), { quiet: true });
+  const dropped = parsed.tasks.length ? addTasks(m, item, parsed.tasks) : [];
+  const edited = parsed.edits.map((e) => `✏️ Updated **${state.tasks[e.task].title}**: ${e.change}`);
+  item.text = [String(parsed.summary || 'Plan ready.'), ...edited].join('\n\n') + (dropped.length ? `\n\n_(Skipped ${dropped.length} item(s) I couldn't match to a teammate.)_` : '');
+  if (!parsed.tasks.length) {
+    // Only edits: no new plan to approve, the work carries on.
+    item.kind = 'review';
+    m.status = 'running';
+    emitMission(m);
+    schedule(m);
+    return drainQueue(m);
+  }
 
   if (state.settings.approvePlans) {
     item.needsApproval = true;
     m.status = 'awaiting_approval';
     notifyFounder(`🔐 Plan ready for your OK — “${m.title}”. Open Yebunna OS to approve it, or reply “approve” to this message.`, { type: 'plan', id: m.id });
     emitMission(m);
+    dispatch();
     return drainQueue(m);
   }
   m.status = 'running';
@@ -497,20 +518,20 @@ Reply with ONLY a JSON object, no other text:
 async function answer(m, question) {
   const item = addThread(m, { role: 'ceo', kind: 'text' });
   const status = missionTasks(m)
-    .map((t) => `### ${t.title} — ${getAgent(t.agentId)?.name} [${t.status}${t.late ? ', late' : ''}], due ${fmt(t.deadline)}${t.file ? `, file ${t.file}` : ''}\n${clip(t.output, 1500)}`)
+    .map((t) => `### ${t.title} — ${getAgent(t.agentId)?.name} [${t.status}${t.late ? ', late' : ''}], due ${fmt(t.deadline)}\n${clip(t.output, 600)}`)
     .join('\n\n');
   await streamInto(m, item, {
     system: systemPrompt(ceo()),
     messages: [
       {
         role: 'user',
-        content: `Mission: ${m.goal}\nDeadline: ${fmt(m.deadline)}\nFiles: ${m.folder}/\n\nTeam progress:\n${status || '(nothing yet)'}\n\nFounder asks: ${question}\n\nAnswer as the CEO (you may read the team's files to check). Do not do specialist work yourself; if new work is needed, say so — the founder can switch the box to "Delegate to team".`,
+        content: `Mission: ${m.goal}\nDeadline: ${fmt(m.deadline)}\nFiles: ${m.folder}/\n\nTeam progress:\n${status || '(nothing yet)'}\n\nFounder asks: ${question}\n\nAnswer as the CEO in a few short lines (you may read the team's files to check). Don't do specialist work; if work is needed, say so — the founder can switch the box to "Delegate to team".`,
       },
     ],
     tools: CEO_TOOLS,
     agentId: 'ceo',
     kind: 'chat',
-    maxTurns: 30,
+    maxTurns: 12,
     demo: () => `Good question. Right now ${missionTasks(m).filter((t) => t.status === 'done').length} of ${m.taskIds.length} tasks are done. My recommendation: keep the scope tight and ship. (Demo mode — log in to Claude Code for a real answer.)`,
   });
   emitMission(m);
@@ -532,61 +553,77 @@ function schedule(m) {
     }
   }
 
-  const busy = tasks.filter((t) => t.status === 'in_progress' || t.status === 'review').length;
-  const ready = tasks
-    .filter((t) => t.status === 'queued' && t.dependsOn.every((id) => state.tasks[id]?.status === 'done'))
-    .sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline)); // earliest deadline first
-  for (const t of ready.slice(0, Math.max(0, MAX_PARALLEL - busy))) {
-    runTask(m, t).catch((e) => {
+  if (tasks.every((t) => ['done', 'failed'].includes(t.status))) {
+    report(m).catch((e) => fail(m, e));
+  }
+  dispatch();
+}
+
+const BUSY = ['in_progress', 'review'];
+const FINISHED = ['done', 'failed'];
+
+/**
+ * One specialist works at a time across the whole company. The next task starts only when the
+ * previous one is reviewed and handed over: oldest mission first, tasks in plan order. A mission
+ * whose next task waits on the founder (or on the CEO unblocking it) lets the next mission go.
+ */
+function dispatch() {
+  if (limited()) return;
+  if (Object.values(state.tasks).some((t) => BUSY.includes(t.status))) return;
+  const missions = Object.values(state.missions)
+    .filter((m) => m.status === 'running' || m.status === 'planning')
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  for (const m of missions) {
+    if (m.status === 'planning') return; // an older mission is being planned: it goes first
+    const next = missionTasks(m).find((t) => !FINISHED.includes(t.status));
+    if (!next || next.status !== 'queued') continue;
+    if (!next.dependsOn.every((id) => FINISHED.includes(state.tasks[id]?.status ?? 'done'))) continue;
+    next.status = 'in_progress'; // claim it now, so nothing else starts before the run begins
+    runTask(m, next).catch((e) => {
       console.error('task crashed', e);
-      t.status = 'failed';
-      t.error = e.message;
-      emitTask(t);
+      next.status = 'failed';
+      next.error = e.message;
+      emitTask(next);
       schedule(m);
     });
-  }
-
-  if (busy === 0 && ready.length === 0 && tasks.every((t) => ['done', 'failed'].includes(t.status))) {
-    report(m).catch((e) => fail(m, e));
+    return;
   }
 }
 
-function assignmentPrompt(m, t, agent, previous) {
-  const inputs = t.dependsOn
-    .map((id) => state.tasks[id])
-    .filter(Boolean)
-    .map((d) => `### From ${getAgent(d.agentId)?.name}: ${d.title} (file: ${d.file || 'n/a'})\n${clip(d.output, 4000)}`)
+/** The short handover a finished task passes on (its final message), for the tasks after it. */
+const handoverOf = (t) => clip(String(t.output || '').trim(), 1500);
+
+function assignmentPrompt(m, t, agent) {
+  // Everything handed over earlier in this mission, in order (short handovers, not full outputs).
+  const before = missionTasks(m).slice(0, m.taskIds.indexOf(t.id));
+  const inputs = before
+    .filter((d) => d.status === 'done')
+    .map((d) => `### ${getAgent(d.agentId)?.name}: ${d.title}\n${handoverOf(d)}`)
     .join('\n\n');
   const skill = t.skillId && state.skills[t.skillId];
-  const revision = t.feedback
-    ? `\n\nYour previous version was sent back. Feedback: ${t.feedback}\n\nPrevious version:\n${clip(previous, 4000)}\n\nDeliver an improved, complete version.`
-    : '';
   const workDir = `${m.folder}/${slugify(agent.name, 20)}`;
-  const skills = (t.skills || []).map((name) => {
-    const s = skillByName(name);
-    return s ? `- ${s.name} → ${s.path ? `Read ${s.path} and follow it` : 'written skill (in your instructions)'}` : `- ${name} → not installed yet: search for it with find-skills (\`npx skills find ${name}\`), install it into .skills/ and use it; if you can't, do the task without it and say so`;
-  });
-  return `Assignment from ${ceo().name} (CEO)
-Company goal: ${m.goal}
-Your task: ${t.title}
+  const revision = t.feedback ? `\n\nCHANGE REQUESTED: ${t.feedback}\nYour earlier files are in ${workDir}/: update them; don't start over unless the change needs it.` : '';
+  const named = (t.skills || []).map((name) => ({ name, s: skillByName(name) }));
+  const skills = named.map(({ name, s }) => (s ? `- ${s.name} → ${s.path ? `Read ${s.path} and follow it` : 'written skill, below'}` : `- ${name} → not installed: find it with find-skills (\`npx skills find ${name}\`) and install it into .skills/, or work without it and say so`));
+  const writtenBodies = [skill, ...named.map((x) => x.s)].filter((s, i, all) => s && !s.path && all.indexOf(s) === i).map((s) => `### Skill: ${s.name}\n${s.body}`);
+  return `Task from ${ceo().name} (CEO): ${t.title}
+Product: ${m.goal}
 Brief: ${t.brief}
-Deliverable: ${t.deliverable}${t.inputs?.length ? `\nInputs to use:\n${t.inputs.map((x) => `- ${x}`).join('\n')}` : ''}${skills.length ? `\nSkills the CEO picked for this task (open each SKILL.md before you start, and follow it):\n${skills.join('\n')}` : ''}${t.acceptance?.length ? `\nAcceptance criteria (the CEO reviews against these, so check them yourself before handing in):\n${t.acceptance.map((x) => `- ${x}`).join('\n')}` : ''}
-Deadline: ${fmt(t.deadline)} (now: ${fmt(now())})
-Your folder in the shared workspace: ${workDir}/  (mission folder: ${m.folder}/)
-${skill ? `\nUse your skill "${skill.name}":\n${skill.path ? `Read ${skill.path} and follow it.` : skill.body}\n` : ''}${inputs ? `\nInputs from teammates:\n${inputs}` : ''}${revision}
+Deliverable: ${t.deliverable}${t.inputs?.length ? `\nInputs:\n${t.inputs.map((x) => `- ${x}`).join('\n')}` : ''}${skills.length ? `\nSkills (open each before you start):\n${skills.join('\n')}` : ''}${t.acceptance?.length ? `\nAcceptance criteria (check them yourself before handing in):\n${t.acceptance.map((x) => `- ${x}`).join('\n')}` : ''}
+Deadline: ${fmt(t.deadline)} (now ${fmt(now())})
+Save files ONLY in ${workDir}/ (mission folder ${m.folder}/; read teammates' files there, don't copy them).
+${skill?.path ? `\nUse your skill "${skill.name}": Read ${skill.path} and follow it.\n` : ''}${writtenBodies.length ? `\n${writtenBodies.join('\n\n')}\n` : ''}${inputs ? `\nHANDED OVER BY TEAMMATES (open their files when you need detail):\n${inputs}` : ''}${revision}
 
-Do the work now — you, not someone else. Check your skills list and use any that fit. Save real artifacts
-(code, data, spreadsheets, copy, assets) as files ONLY inside ${workDir}/ — never create other folders
-under missions/ and never save duplicate copies elsewhere. Teammates' files are in ${m.folder}/ (read them,
-don't copy them). Check your files (e.g. run them) before you finish. Your FINAL message must be the complete deliverable in Markdown (it is filed automatically),
-ending with a short "Files" list of everything you saved.
+Do the work now, in files. Check them (e.g. run them) before you finish.
+Your FINAL message is only the handover, at most 150 words, exactly in this form:
+RESULT: <one line>
+FILES: <paths you saved>
+KEY POINTS: <up to 5 short bullets: decisions, numbers, what the next teammate must know>
+OPEN: <anything unresolved, or "none">
 
-IF YOU ARE STUCK: first try another way (a different source, tool or approach, a teammate's files). If you
-still cannot finish, do NOT guess or fake it: hand in whatever partial work you have, and make the LAST line
-of your message exactly:
-BLOCKED: <what stops you> | NEED: <exactly what would unblock you, and from whom>
-The CEO will unblock you or ask the founder. Use it only for real blockers (missing access or login, a
-decision or information only the founder has, a tool that fails every time) — not for small doubts.`;
+If you are truly stuck (missing access or login, a decision only the founder can make, a tool that fails
+every time), try another way first; then hand in what you have and make the LAST line exactly:
+BLOCKED: <what stops you> | NEED: <what would unblock you, and from whom>`;
 }
 
 async function runTask(m, t) {
@@ -599,6 +636,7 @@ async function runTask(m, t) {
   }
   const reviewOnly = t.reviewOnly && t.output; // the limit hit during the CEO review: the work is already done
   t.reviewOnly = false;
+  t.amendPending = null;
   t.status = reviewOnly ? 'review' : 'in_progress';
   t.startedAt = t.startedAt || now();
   const previous = t.output;
@@ -636,7 +674,7 @@ async function runTask(m, t) {
       {
         system: systemPrompt(agent),
         messages: [{ role: 'user', content }],
-        effort: 'high',
+        effort: 'medium',
         tools: toolsFor(agent),
         agentId: agent.id,
         kind: 'task',
@@ -649,7 +687,7 @@ async function runTask(m, t) {
     );
 
   try {
-    const prompt = assignmentPrompt(m, t, agent, previous);
+    const prompt = assignmentPrompt(m, t, agent);
     if (!reviewOnly) try {
       await run(prompt, agent.computer ? 150 : 100);
     } catch (e) {
@@ -658,7 +696,7 @@ async function runTask(m, t) {
       if ((e.partial || t.output).length < 400) {
         logActivity(agent.id, `ran long on “${t.title}” — wrapping up`, ref);
         t.output = '';
-        await run(`${prompt}\n\nIMPORTANT: you already worked on this and ran out of steps. Do NOT start over or explore further. Check the files you already saved in ${m.folder}/, fix only what is essential, and write the final deliverable now.`, 25);
+        await run(`${prompt}\n\nIMPORTANT: you already worked on this and ran out of steps. Do NOT start over or explore further. Check the files you already saved in ${m.folder}/, fix only what is essential, and write the handover now.`, 25);
       }
     }
     if (!t.output.trim()) throw new Error('The bot finished without writing a deliverable.');
@@ -673,7 +711,12 @@ async function runTask(m, t) {
     logActivity('ceo', `is reviewing “${t.title}” from ${agent.name}`, ref);
     const review = await ceoReview(m, t);
     t.review = review;
-    if (review.verdict === 'revise' && t.revisions < MAX_REVISIONS) {
+    if (t.amendPending) {
+      // The founder changed this task while it was being reviewed: redo it with the change.
+      t.feedback = t.amendPending;
+      t.amendPending = null;
+      t.status = 'queued';
+    } else if (review.verdict === 'revise' && t.revisions < MAX_REVISIONS) {
       t.revisions += 1;
       t.feedback = review.feedback;
       t.status = 'queued';
@@ -689,6 +732,14 @@ async function runTask(m, t) {
     }
   } catch (e) {
     if (m.status === 'cancelled') return;
+    if (t.amendPending) {
+      // Stopped because the founder changed the task: start again with the change.
+      t.feedback = t.amendPending;
+      t.amendPending = null;
+      t.status = 'queued';
+      emitTask(t);
+      return schedule(m);
+    }
     if (t.stalled) {
       t.stalled = false;
       return handleBlocker(m, t, { reason: `No progress for ${Math.round(STALL_MS / 60_000)} minutes — the run was stopped. Last thing it did: ${String(t.reasoning || t.output).trim().split('\n').slice(-3).join(' ').slice(0, 300) || 'nothing yet'}`, need: '' });
@@ -834,27 +885,40 @@ function finishTask(m, t) {
   t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
   fileDeliverable(m, t);
   logActivity(t.agentId, `delivered “${t.title}”${t.late ? ' (late)' : ''}`, { type: 'task', id: t.id, missionId: m.id });
-  memorize(t, m).catch(() => {});
   bus.emit('trigger', { event: 'task_completed', task: t });
 }
 
-/** Summarise finished work into the agent's long-term memory. */
-async function memorize(t, m) {
-  const text = await complete({
-    system: 'You write one-line memory notes for an AI teammate. Reply with the note only.',
-    messages: [
-      {
-        role: 'user',
-        content: `Write ONE line (max 35 words) the agent should remember from this finished task: key decisions, numbers or preferences worth reusing. Mention the product.\nProduct: ${m.goal}\nTask: ${t.title}\nDeliverable:\n${clip(t.output, 3000)}`,
-      },
-    ],
-    effort: 'low',
-    model: 'haiku',
-    agentId: t.agentId,
-    kind: 'memory',
-    demo: () => `Did "${t.title}" for "${m.goal}" — delivered ${t.late ? 'late' : 'on time'}.`,
-  });
-  remember(t.agentId, text.replace(/^[-*\s]+/, ''), `task:${t.id}`);
+/**
+ * The founder changed a task that is already assigned: update it instead of creating new work.
+ * Queued → the brief gets the change. Running or in review → it restarts with the change.
+ * Done, waiting for sign-off or failed → it is redone with the change. Waiting on the founder →
+ * the change is their answer.
+ */
+export function amendTask(t, change, { quiet = false } = {}) {
+  const m = state.missions[t.missionId];
+  if (!m) throw new Error('mission not found');
+  change = String(change).trim();
+  if (!quiet) addThread(m, { role: 'user', kind: 'text', text: `✏️ Change to “${t.title}”: ${change}` });
+  if (t.status === 'founder') return answerTask(t, change);
+  if (t.status === 'queued') {
+    t.brief = `${t.brief}\n\nFOUNDER CHANGE: ${change}`;
+  } else if (BUSY.includes(t.status)) {
+    t.amendPending = change;
+    if (t.status === 'in_progress') taskRuns.get(t.id)?.abort();
+  } else if (t.status === 'blocked') {
+    t.feedback = `${t.feedback || ''}\nFounder change: ${change}`.trim();
+  } else {
+    // done, approval or failed: redo it with the change (doesn't count as a CEO revision).
+    t.feedback = change;
+    t.error = null;
+    t.status = 'queued';
+  }
+  emitTask(t);
+  logActivity('ceo', `updated “${t.title}” with the founder's change`, { type: 'task', id: t.id, missionId: m.id });
+  if (['done', 'failed'].includes(m.status)) m.status = 'running';
+  emitMission(m);
+  schedule(m);
+  return t;
 }
 
 /** The CEO checks a deliverable. If the review itself fails, the work still counts. */
@@ -866,19 +930,21 @@ async function ceoReview(m, t) {
       messages: [
         {
           role: 'user',
-          content: `Review this deliverable from ${agent.name} (${agent.role}).
+          content: `Review ${agent.name}'s work.
 Task: ${t.title}
-Brief: ${t.brief}
 Expected deliverable: ${t.deliverable}
 ${t.acceptance?.length ? `Acceptance criteria:\n${t.acceptance.map((x) => `- ${x}`).join('\n')}\n` : ''}
-Deliverable:
-${clip(t.output, 8000)}
+Handover:
+${clip(t.output, 3000)}
 
-Approve only if it meets every acceptance criterion and is specific, verified and premium, not generic. Otherwise ask for a revision with precise, actionable feedback.
-Reply with ONLY JSON: {"verdict": "approve" | "revise", "feedback": "<one or two sentences>"}`,
+Spot-check the main file it lists (Read; a quick look, not a full re-read). Approve only if it meets every
+criterion and is specific and premium. Otherwise ask for a revision.
+Reply with ONLY JSON: {"verdict": "approve" | "revise", "feedback": "<one sentence, exact fix>"}`,
         },
       ],
       effort: 'low',
+      tools: ['Read', 'Glob', 'Grep'],
+      maxTurns: 8,
       agentId: 'ceo',
       kind: 'review',
       signal: signal(m),
@@ -898,22 +964,21 @@ async function report(m) {
   logActivity('ceo', `is writing the report for “${m.title}”`, { type: 'mission', id: m.id });
   const tasks = missionTasks(m);
   const item = addThread(m, { role: 'ceo', kind: 'summary' });
-  const content = `All delegated work for this mission is finished. Write the mission report for the founder.
-Goal: ${m.goal}
-Deadline: ${fmt(m.deadline)} — now ${fmt(now())}
-Workspace folder: ${m.folder}/
+  const content = `All work for this mission is finished. Write the report for the founder.
+Product: ${m.goal}
+Deadline: ${fmt(m.deadline)} — now ${fmt(now())} · folder ${m.folder}/
 
 ${tasks
-  .map((t) => `## ${t.title} — ${getAgent(t.agentId)?.name} [${t.status}${t.late ? ', LATE' : ''}${t.error ? `: ${t.error}` : ''}] file: ${t.file || '-'}\n${clip(t.output, 2500)}`)
+  .map((t) => `## ${t.title} — ${getAgent(t.agentId)?.name} [${t.status}${t.late ? ', LATE' : ''}${t.error ? `: ${t.error}` : ''}]\n${clip(t.output, 1200)}`)
   .join('\n\n')}
 
-Structure: a one-paragraph executive summary, the key decisions and assets produced (with owners
-and file paths), deadline performance, risks/gaps, and the next 3 moves. Be concise.`;
+At most 150 words: what shipped (key files), the key numbers and decisions, gaps, the next 3 moves.
+Don't retell each task.`;
   let text = '';
   for (let attempt = 1; attempt <= 2 && !text.trim(); attempt++) {
     item.text = '';
     try {
-      text = await streamInto(m, item, { system: systemPrompt(ceo()), messages: [{ role: 'user', content }], agentId: 'ceo', kind: 'report', demo: () => demoSummary(m, tasks) });
+      text = await streamInto(m, item, { system: systemPrompt(ceo()), messages: [{ role: 'user', content }], agentId: 'ceo', kind: 'report', maxTurns: 5, demo: () => demoSummary(m, tasks) });
     } catch (e) {
       if (m.status === 'cancelled') return;
       if (isLimitError(e)) {
@@ -943,6 +1008,7 @@ and file paths), deadline performance, risks/gaps, and the next 3 moves. Be conc
 
 function fail(m, e) {
   if (m.status === 'cancelled') return;
+  setTimeout(dispatch, 0); // a failed or paused plan must not hold up other missions
   if (isLimitError(e)) {
     // Hit the usage limit while planning: plan again when it resets.
     for (const item of m.thread) item.streaming = false;

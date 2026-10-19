@@ -167,7 +167,7 @@ Transcript so far:
 ${transcriptText(mt) || '(you speak first)'}
 
 It is your turn (round ${round}). ${role}
-Speak naturally in 40–120 words, first person, no headings, no lists longer than 3 items. Do not speak for others.`,
+Speak in 30–80 words, first person, no headings, at most 3 bullets. Add only what is new: never repeat what was already said. Do not speak for others.`,
         },
       ],
       effort: 'low',

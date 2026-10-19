@@ -25,6 +25,7 @@ import { addRule, removeRule, listRules } from './src/playbook.js';
 import { resume as resumeAfterLimit } from './src/limits.js';
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
+import { ceoChat } from './src/ceochat.js';
 import { seedHouseSkills } from './src/house.js';
 import { storageReport } from './src/disk.js';
 import { referencePath, MAX_UPLOAD } from './src/references.js';
@@ -168,12 +169,8 @@ const routes = {
   'GET /api/settings': (req, res) => send(res, 200, state.settings),
   'PUT /api/settings': async (req, res) => {
     const body = await readBody(req);
-    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless', 'economy', 'opusForLarge']) if (k in body) state.settings[k] = Boolean(body[k]);
+    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless']) if (k in body) state.settings[k] = Boolean(body[k]);
     if (['chrome', 'msedge', 'firefox'].includes(body.browser)) state.settings.browser = body.browser;
-    if (['quality', 'balanced', 'economy'].includes(body.usageMode)) {
-      state.settings.usageMode = body.usageMode;
-      state.settings.economy = body.usageMode === 'economy';
-    }
     save();
     bus.emit('event', { type: 'settings', settings: state.settings });
     send(res, 200, state.settings);
@@ -346,19 +343,35 @@ const routes = {
     const { text } = await readBody(req);
     need(text?.trim(), 400, 'text is required');
 
+    // The reply keeps going even if the page is closed or refreshed; it is saved either way.
+    const stream = sse(res);
+    const write = (ev) => !res.destroyed && !res.writableEnded && stream(ev);
+    if (agentId === 'ceo') {
+      // One conversation with the CEO (app and Telegram): it edits assigned work, adds work, or
+      // starts a mission only for a new product.
+      try {
+        let content = await ceoChat(text.trim(), { via: 'app' });
+        const last = state.chats.ceo.at(-1);
+        if (last?.missionId) {
+          last.content = content = `${content}\n\n→ [Open the mission](#/m/${last.missionId})`;
+          save();
+        }
+        write({ type: 'replace', content });
+        write({ type: 'done' });
+      } catch (e) {
+        write({ type: 'error', text: e.message });
+      }
+      if (!res.writableEnded) res.end();
+      return;
+    }
     // "Remember …" saves straight to the bot's memory.
     const rememberMatch = text.trim().match(/^(?:please\s+)?remember(?:\s+that)?[:,]?\s+(.+)/is);
     if (rememberMatch) {
       remember(agentId, rememberMatch[1], 'chat');
       bus.emit('event', { type: 'memory', agentId, memory: state.memory[agentId] });
     }
-
     const history = (state.chats[agentId] ||= []);
     history.push({ role: 'user', content: text.trim(), at: now() });
-    // The reply keeps going even if the page is closed or refreshed; it is saved either way.
-    const stream = sse(res);
-    const write = (ev) => !res.destroyed && !res.writableEnded && stream(ev);
-    const isCeo = agentId === 'ceo';
     const ref = { type: 'chat', agentId };
     const track = toolTracker(agentId, ref);
 
@@ -369,24 +382,14 @@ const routes = {
         .slice(-5)
         .map((t) => `- ${t.title} [${t.status}] due ${t.deadline}${t.file ? ` (file: ${t.file})` : ''}`)
         .join('\n');
-      const ceoRules = isCeo
-        ? `\n\nWhen the founder asks for WORK to be done (build, write, research, design, price, launch, fix…), you do
-not do it yourself. Reply in 1–3 sentences saying which teammates will handle it, then end your message
-with exactly one block in this format:
-\`\`\`delegate
-{"goal": "<the work, written as a clear mission goal with all the details the founder gave>", "deadline_hours": <number>}
-\`\`\`
-The OS turns it into a mission and you delegate it to the team. For questions, status checks and advice,
-just answer (you may read the team's files) — no block.`
-        : '';
       for await (const ev of streamChat({
-        system: `${systemPrompt(agent)}\n\nYou are chatting 1:1 with the founder.${work ? `\nYour recent assignments:\n${work}` : ''}${rememberMatch ? '\nThe founder just asked you to remember something; it is saved to your memory — confirm briefly.' : ''}${ceoRules}`,
-        messages: history.slice(-20).map(({ role, content }) => ({ role, content })),
-        tools: isCeo ? ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'] : toolsFor(agent),
+        system: `${systemPrompt(agent)}\n\nYou are chatting 1:1 with the founder.${work ? `\nYour recent assignments:\n${work}` : ''}${rememberMatch ? '\nThe founder just asked you to remember something; it is saved to your memory — confirm briefly.' : ''}\nReply briefly.`,
+        messages: history.slice(-8).map(({ role, content }) => ({ role, content })),
+        tools: toolsFor(agent),
         agentId,
         kind: 'chat',
         maxTurns: agent.computer ? 150 : 100,
-        demo: () => (isCeo && !rememberMatch ? `On it — I'll get the team on this.\n\n\`\`\`delegate\n${JSON.stringify({ goal: text.trim(), deadline_hours: 24 })}\n\`\`\`` : demoChat(agentId, text)),
+        demo: () => demoChat(agentId, text),
       })) {
         if (ev.type === 'turn') {
           // Text before a tool call was working-out-loud: keep it under Thoughts.
@@ -400,23 +403,8 @@ just answer (you may read the team's files) — no block.`
         write(ev);
       }
 
-      // CEO handed work to the team: start a real mission (it shows on the board).
-      const block = isCeo && reply.content.match(/```delegate\s*([\s\S]*?)```/);
-      if (block) {
-        let spec = {};
-        try {
-          spec = JSON.parse(block[1]);
-        } catch {
-          spec = { goal: text.trim() };
-        }
-        const hours = Math.min(24 * 60, Math.max(1, Number(spec.deadline_hours) || 24));
-        const m = createMission({ goal: String(spec.goal || text).trim(), deadline: new Date(Date.now() + hours * 36e5).toISOString(), source: 'chat' });
-        reply.content = `${reply.content.replace(block[0], '').trim()}\n\n→ Started mission **[${m.title}](#/m/${m.id})** (due in ${hours}h) — I'm assigning it to the team now.`;
-        reply.missionId = m.id;
-        write({ type: 'replace', content: reply.content });
-      }
       history.push(reply);
-      logActivity(agentId, block ? 'turned your chat request into a mission' : 'replied to you in chat', ref);
+      logActivity(agentId, 'replied to you in chat', ref);
       write({ type: 'done' });
     } catch (e) {
       if (reply.content) history.push(reply);

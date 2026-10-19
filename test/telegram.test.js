@@ -119,7 +119,7 @@ const missions = async () => (await api('GET', '/api/state')).body.missions;
 test('chatting with the CEO: an instruction becomes a mission, and the chat shows in the app', async () => {
   const before = (await missions()).length;
   founderSays('Research the top 5 competitors of ProfitCheck');
-  await waitFor(() => sent.find((s) => /Started mission/.test(s.text)), 'the CEO to start a mission');
+  await waitFor(() => sent.find((s) => /New mission/.test(s.text)), 'the CEO to start a mission');
   const after = await missions();
   assert.equal(after.length, before + 1);
   assert.match(after.find((m) => m.source === 'chat').goal, /competitors/);
@@ -138,14 +138,14 @@ test('replying to a "mission complete" message sends a comment to that mission',
   const done = await waitFor(() => sent.find((s) => /Mission complete/.test(s.text)), 'a mission-complete message', 90_000);
   const m = (await missions()).find((x) => done.text.includes(x.title));
   founderSays('Make the copy shorter and add Amharic headlines', done.message_id);
-  await waitFor(() => sent.find((s) => /Passed to the team on/.test(s.text)), 'the follow-up confirmation');
+  await waitFor(() => sent.find((s) => /Added to/.test(s.text)), 'the follow-up confirmation');
   const thread = (await missions()).find((x) => x.id === m.id).thread;
   assert.ok(thread.some((i) => i.role === 'user' && /shorter/.test(i.text)), 'comment landed in the mission');
 });
 
 test('a photo with a caption is saved as a reference and handed to the CEO with its path', async () => {
   inbox.push({ update_id: nextId++, message: { message_id: nextId++, chat: { id: CHAT, type: 'private' }, photo: [{ file_id: 'small' }, { file_id: 'big' }], caption: 'Make ads in this style' } });
-  await waitFor(() => sent.find((s) => /Started mission “Make ads in this style/.test(s.text)), 'a mission from the photo');
+  await waitFor(() => sent.find((s) => /New mission “Make ads in this style/.test(s.text)), 'a mission from the photo');
   const m = (await missions()).find((x) => /Make ads in this style/.test(x.goal));
   assert.match(m.goal, /references\/\d{4}-\d{2}-\d{2}\/photo-\d+\.jpg/, 'the goal names the saved file');
   inbox.push({ update_id: nextId++, message: { message_id: nextId++, chat: { id: CHAT, type: 'private' }, video: { file_id: 'v1', file_name: 'sample.mp4' } } });

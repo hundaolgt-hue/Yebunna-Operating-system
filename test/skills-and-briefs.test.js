@@ -101,11 +101,13 @@ test('a .skill file uploads into the library and reaches its bots', async () => 
 test('every built-in bot has a full job description and core skills', async () => {
   const { agents } = await get('/api/meta');
   for (const a of agents) {
-    assert.ok(a.persona.length > 600, `${a.name} has a detailed persona`);
+    assert.ok(a.persona.length > 400, `${a.name} has a job description`);
     assert.ok(a.coreSkills.length >= 3, `${a.name} has core skills`);
+    assert.ok(a.model && a.effort, `${a.name} has a model and effort`);
+    if (a.id !== 'ceo') assert.match(a.persona, /YOU OWN:[\s\S]*NOT YOURS:/, `${a.name} has sharp role borders`);
   }
   const vega = agents.find((a) => a.id === 'creative');
-  assert.match(vega.persona, /multi-million-dollar/);
+  assert.match(vega.persona, /every video/);
   assert.ok(vega.coreSkills.includes('higgsfield-motion') && vega.coreSkills.includes('rapha-motion-video'));
   const nova = agents.find((a) => a.id === 'research');
   assert.match(nova.persona, /Ad Library/);
