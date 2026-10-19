@@ -89,6 +89,7 @@ One Grok Bot feature isn't included:
 
 ## Troubleshooting
 
+- **My connections, missions or settings are gone.** Everything you set up is saved in the `data` folder inside the app's folder (`data/state.json`), never in git. A second copy of the app (e.g. a new `git clone`) starts empty. Use the folder you used before, or copy its `data` and `workspace` folders into the new one while the app is stopped. At start the app prints which data file it uses. Logins to Claude Code and Higgsfield live in Claude Code itself and are not affected.
 - **Skill packs say "git is not installed".** Install Git for Windows, then click **Skills → Install / update all**.
 - **Python tasks fail.** Install Python from python.org and tick "Add python.exe to PATH". Then run `pip install openpyxl pandas pypdf pdfplumber reportlab` once (the PDF skill uses the last three).
 - **"Claude Code is not logged in".** Run `claude`, type `/login`, choose your Claude subscription, then type `/exit`.
@@ -129,8 +130,8 @@ This setup is for your own use on your own machine. Anthropic doesn't allow offe
 | `DEMO_MODE` | `0` | `1` forces the offline demo |
 | `MAX_CONCURRENT_RUNS` | `2` | Claude Code processes allowed at once, 1 or 2 (one bot and the CEO; your chats go first in line) |
 | `RUN_TIMEOUT_MINUTES` | `45` | Longest a single bot run may take before it is stopped |
-| `DATA_DIR` | `./data` | Where missions, memory, skills and routines are saved (`state.json`) |
-| `WORKSPACE_DIR` | `./workspace` | The shared folder bots work in |
+| `DATA_DIR` | `data` in the app folder | Where missions, memory, skills and routines are saved (`state.json`) |
+| `WORKSPACE_DIR` | `workspace` in the app folder | The shared folder bots work in |
 | `META_API_VERSION` | `v26.0` | Graph / Marketing API version for the Meta connection (the test switches to a newer one if Meta asks) |
 | `LIMIT_CHECK_HOURS` | `2` | After a usage-limit pause with no reset time, how often to try again |
 | `RETRO_TIME` | `08:00` | Time of the morning retrospective created on first start |

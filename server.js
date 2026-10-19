@@ -6,7 +6,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allAgents, getAgent, publicAgent, systemPrompt, createAgent, updateAgent, resetAgent, deleteAgent, remember, forget, toolsFor, setComputerForAll } from './src/agents.js';
-import { state, save, now, WORKSPACE } from './src/store.js';
+import { state, save, now, WORKSPACE, loadInfo } from './src/store.js';
 import { providerInfo, streamChat, complete, detectionReport, warmBrowser, runStats } from './src/llm.js';
 import { demoChat } from './src/demo.js';
 import {
@@ -683,6 +683,7 @@ server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);
   console.log(`Shared workspace: ${WORKSPACE}`);
+  console.log(`Saved data: ${loadInfo.file}${loadInfo.found ? '' : ' (none yet: a new, empty setup; to bring back an earlier setup, copy its data folder here)'}`);
   if (p.name !== 'demo') return console.log(`Engine: Claude via Claude Code ${p.cli} — model: ${p.model}`);
   console.log('Engine: offline demo (install Claude Code and run `claude` once to log in with your subscription)');
   const tried = detectionReport();

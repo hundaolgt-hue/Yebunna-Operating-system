@@ -3,12 +3,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+// Saved data and the workspace live in the app's own folder, wherever the app is started from.
+const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(APP_DIR, 'data'));
 const FILE = path.join(DATA_DIR, 'state.json');
 
 // The shared cloud-computer equivalent: a real folder every agent works in.
-export const WORKSPACE = path.resolve(process.env.WORKSPACE_DIR || path.join(process.cwd(), 'workspace'));
+export const WORKSPACE = path.resolve(process.env.WORKSPACE_DIR || path.join(APP_DIR, 'workspace'));
 fs.mkdirSync(WORKSPACE, { recursive: true });
 
 export const state = {
@@ -39,13 +42,23 @@ export const state = {
   },
 };
 
-try {
-  const saved = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-  for (const key of Object.keys(state)) {
-    if (saved[key]) state[key] = key === 'settings' ? { ...state.settings, ...saved.settings } : saved[key];
+export const loadInfo = { file: FILE, found: false, recovered: null };
+if (fs.existsSync(FILE)) {
+  try {
+    const saved = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    for (const key of Object.keys(state)) {
+      if (saved[key]) state[key] = key === 'settings' ? { ...state.settings, ...saved.settings } : saved[key];
+    }
+    loadInfo.found = true;
+  } catch (e) {
+    // Never overwrite saved data we couldn't read: keep a copy the founder can restore.
+    const copy = path.join(DATA_DIR, `state.unreadable-${Date.now()}.json`);
+    try {
+      fs.copyFileSync(FILE, copy);
+      loadInfo.recovered = copy;
+    } catch {}
+    console.error(`Could not read ${FILE} (${e.message}). A copy was kept at ${copy}.`);
   }
-} catch {
-  // first run — nothing saved yet
 }
 
 let timer = null;
