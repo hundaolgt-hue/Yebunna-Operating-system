@@ -210,13 +210,14 @@ export function pick(kind, model, effort, maxTurns, size = 'medium', agentId) {
   const steps = kind === 'task' ? STEPS[size] || STEPS.medium : 100;
   const budget = Math.round((steps * maxTurns) / 100);
   if (model) return { model, effort, maxTurns: budget }; // an explicit model (e.g. haiku for notes) wins
-  const r = runSettings(agentId, kind);
+  const r = runSettings(agentId, kind, effort);
   return { model: r.model || MODEL, effort: r.effort || effort, maxTurns: budget };
 }
 
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo }) {
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo, onStart }) {
   ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size, agentId));
   if (demoMode) {
+    onStart?.();
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
     return;
   }
@@ -230,7 +231,13 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
   // Instructions go in a file: Windows caps a command line at ~32k characters.
   const promptFile = path.join(os.tmpdir(), `yebunna-sys-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-  fs.writeFileSync(promptFile, system);
+  try {
+    fs.writeFileSync(promptFile, system);
+  } catch (e) {
+    releaseSlot(); // e.g. the disk is full: never keep the slot
+    throw e;
+  }
+  onStart?.(); // the run really starts now (it may have waited for a free slot)
   const args = [
     '-p',
     '--output-format', 'stream-json',

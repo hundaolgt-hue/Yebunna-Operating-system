@@ -136,7 +136,7 @@ export function saveConnection(id, { config = {}, bots, enabled }) {
     if (v === undefined) continue;
     // Secret boxes are left empty to keep the saved value (Disconnect clears it).
     if (f.secret && (!String(v).trim() || String(v).startsWith('••••••'))) continue;
-    c.config[f.key] = f.secret ? cleanToken(v) : String(v).trim();
+    c.config[f.key] = f.secret ? cleanToken(v) : String(v).trim().replace(/^["']+|["']+$/g, '').trim(); // Explorer's "Copy as path" adds quotes
   }
   if (id === 'telegram' && c.config.token && !/^\d+:[\w-]{30,}$/.test(c.config.token)) {
     throw new Error("That doesn't look like a Telegram bot token. It looks like 123456789:AA… — copy the whole line BotFather sent you.");
@@ -182,7 +182,7 @@ export async function testConnection(id) {
       if (!cfg.path) throw new Error('No folder set');
       const st = fs.statSync(cfg.path);
       if (!st.isDirectory()) throw new Error('That path is not a folder');
-      const out = path.join(cfg.path, cfg.outputs || 'Yebunna OS');
+      const out = outputsDir(cfg);
       fs.mkdirSync(out, { recursive: true });
       fs.accessSync(out, fs.constants.W_OK);
       account = `outputs go to ${out}`;
@@ -304,10 +304,11 @@ export function connectionRuntime(agentId) {
 }
 
 /** Where finished work is published in Drive (created when needed), or null when Drive isn't connected. */
+const outputsDir = (cfg) => path.join(cfg.path, String(cfg.outputs || 'Yebunna OS').replace(/[<>:"/\\|?*]/g, ' ').trim() || 'Yebunna OS');
 export function driveOutputRoot() {
   const c = conns().gdrive;
   if (!c?.enabled || !c.config?.path || !fs.existsSync(c.config.path)) return null;
-  return path.join(c.config.path, String(c.config.outputs || 'Yebunna OS').replace(/[<>:"/\\|?*]/g, ' ').trim() || 'Yebunna OS');
+  return outputsDir(c.config);
 }
 
 /** Instructions describing the bot's connections and the rules for using them. */

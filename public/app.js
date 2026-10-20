@@ -248,6 +248,11 @@ async function loadState() {
 function renderLimit() {
   const el = $('#limit-banner');
   const gb = S.disk ? (S.disk.free / 1024 ** 3).toFixed(1) : '?';
+  if (!S.limit && S.disk?.saveError && S.disk.status === 'ok') {
+    el.hidden = false;
+    el.innerHTML = `<span>⚠️ <b>Not saving.</b> ${esc(S.disk.saveError)}</span>`;
+    return;
+  }
   if (S.limit?.kind === 'disk' || (!S.limit && S.disk && S.disk.status !== 'ok')) {
     el.hidden = false;
     el.innerHTML = `<span>💾 <b>${S.limit ? 'Paused — the disk is almost full' : 'Disk space is low'}</b> (${gb} GB free).${S.limit ? ' Work resumes by itself once there is room.' : ''}${S.disk?.saveError ? ` ${esc(S.disk.saveError)}` : ''}</span><span class="spacer"></span><a class="btn-ghost" href="#/settings">See what uses space</a>`;

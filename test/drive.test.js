@@ -24,7 +24,7 @@ test('names are safe for Windows and Drive', () => {
   assert.equal(cleanName('  ...  '), 'Untitled');
 });
 
-test('a task is published as a version; a new version replaces the old one', () => {
+test('a task is published as a version; a new version replaces the old one', async () => {
   saveConnection('gdrive', { config: { path: DRIVE } });
   const m = { id: 'm1', createdAt: '2026-10-19T09:00:00Z', title: 'x', product: 'ProfitCheck Pro', taskIds: ['t1'] };
   const t = { id: 't1', title: 'Find the winning niche', output: 'RESULT: done', workDir: 'missions/m1/01-niche', completedAt: '2026-10-19T12:30:00Z' };
@@ -33,7 +33,7 @@ test('a task is published as a version; a new version replaces the old one', () 
   fs.writeFileSync(path.join(work, 'niche-report.md'), 'v1');
   fs.writeFileSync(path.join(work, 'frames', 'f001.png'), 'temp');
   fs.writeFileSync(path.join(work, '.scratch'), 'hidden');
-  publishTask(m, t, 'Nova');
+  await publishTask(m, t, 'Nova');
   assert.deepEqual(ls(), ['2026-10-19 ProfitCheck Pro']);
   assert.deepEqual(ls('2026-10-19 ProfitCheck Pro'), ['01 Find the winning niche (Nova)']);
   const files = ls('2026-10-19 ProfitCheck Pro', '01 Find the winning niche (Nova)');
@@ -42,14 +42,14 @@ test('a task is published as a version; a new version replaces the old one', () 
 
   fs.writeFileSync(path.join(work, 'niche-report.md'), 'v2');
   t.completedAt = '2026-10-19T15:00:00Z';
-  publishTask(m, t, 'Nova');
+  await publishTask(m, t, 'Nova');
   const after = ls('2026-10-19 ProfitCheck Pro', '01 Find the winning niche (Nova)');
   assert.ok(after.every((f) => f.includes('_v2_')), 'only version 2 is left');
   const report = after.find((f) => f.startsWith('niche-report_v2_'));
   assert.equal(fs.readFileSync(path.join(DRIVE, 'Yebunna OS', '2026-10-19 ProfitCheck Pro', '01 Find the winning niche (Nova)', report), 'utf8'), 'v2');
 
-  publishReport(m, 'Shipped.');
-  publishReport(m, 'Shipped again.');
+  await publishReport(m, 'Shipped.');
+  await publishReport(m, 'Shipped again.');
   const reports = ls('2026-10-19 ProfitCheck Pro').filter((f) => f.startsWith('00 Mission report'));
   assert.equal(reports.length, 1);
   assert.match(reports[0], /^00 Mission report_v2_/);
@@ -72,6 +72,21 @@ test('a finished mission lands in Drive with every task and the report', async (
   assert.ok(inside.some((f) => /^01 Collect buyer quotes \(Nova\)$/.test(f)));
   assert.ok(inside.some((f) => /^02 Write ad hooks \(Echo\)$/.test(f)));
   assert.ok(inside.some((f) => /^00 Mission report_v1_/.test(f)));
+  for (let i = 0; i < 50 && !missionTasks(m).every((t) => t.version === 1); i++) await sleep(100);
   assert.ok(missionTasks(m).every((t) => t.version === 1));
   assert.ok(state.missions[m.id].thread.some((i) => /Google Drive/.test(i.text)));
+});
+
+test('two missions with the same name never share a Drive folder', async () => {
+  const mk = (id) => ({ id, createdAt: '2026-10-20T09:00:00Z', title: 'Daily ad check', taskIds: [`${id}t`] });
+  const a = mk('ma');
+  const b = mk('mb');
+  state.missions.ma = a;
+  state.missions.mb = b;
+  await publishReport(a, 'A');
+  await publishReport(b, 'B');
+  assert.equal(a.driveFolder, '2026-10-20 Daily ad check');
+  assert.equal(b.driveFolder, '2026-10-20 Daily ad check (2)');
+  const read = (m) => fs.readdirSync(path.join(DRIVE, 'Yebunna OS', m.driveFolder)).filter((f) => f.startsWith('00 Mission report'));
+  assert.equal(read(a).length, 1, "B's report did not remove A's");
 });

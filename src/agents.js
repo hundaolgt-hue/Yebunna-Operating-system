@@ -3,7 +3,16 @@
 import { state, save, newId, now } from './store.js';
 import { connectionTools, connectionPrompt } from './connections.js';
 import { playbookPrompt } from './playbook.js';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { PERSONAS, CORE_SKILLS, RUN_SETTINGS, HOUSEKEEPING, MODELS, EFFORTS } from './personas.js';
+
+// Fingerprints of every earlier built-in default (role, job description, specialties, core skills).
+// A saved "edit" that is just an old default was never really edited: it is dropped, so app
+// updates to the job descriptions reach the bots.
+const LEGACY = createRequire(import.meta.url)('./legacy-defaults.json');
+const fingerprint = (v) => createHash('sha256').update(typeof v === 'string' ? v.trim() : JSON.stringify(v)).digest('hex').slice(0, 16);
+const DEFAULT_FIELDS = ['persona', 'role', 'specialties', 'coreSkills', 'model', 'effort', 'planModel', 'planEffort'];
 
 const COMPANY = `You work at Yebunna, a lean AI-native company that builds and sells digital products, in a team of
 AI agents run by a CEO. Produce real, usable work, not descriptions of work. No generic or padded output:
@@ -83,6 +92,7 @@ const BUILTIN = [
   },
   {
     id: 'landing',
+    computer: true, // checks its pages in a real browser at phone and desktop widths
     persona: PERSONAS.landing,
     coreSkills: CORE_SKILLS.landing,
     tools: [...FILES, ...WEB],
@@ -128,6 +138,9 @@ for (const a of BUILTIN) {
   Object.assign(a, RUN_SETTINGS[a.id]);
 }
 
+// Saves from older versions froze the then-default job descriptions: release them.
+if (BUILTIN.map((a) => pruneOverrides(a.id)).some(Boolean)) save();
+
 const COLORS = ['#c084fc', '#2dd4bf', '#f87171', '#a3e635', '#818cf8', '#fda4af', '#facc15', '#38bdf8'];
 
 const baseTools = () => FILES;
@@ -136,7 +149,7 @@ const baseTools = () => FILES;
  * The model and effort a bot runs on for this kind of work. The CEO plans and briefs on its
  * planning model; meetings use the bot's model at low effort; housekeeping uses the smallest model.
  */
-export function runSettings(agentId, kind) {
+export function runSettings(agentId, kind, requested) {
   if (kind === 'memory') return HOUSEKEEPING;
   const a = getAgent(agentId);
   if (!a) return { model: 'sonnet', effort: 'medium' };
@@ -144,7 +157,30 @@ export function runSettings(agentId, kind) {
   const model = a.model || 'sonnet';
   // Sorting the founder's messages (edit vs add vs new product) needs real thought.
   if (agentId === 'ceo' && kind === 'chat' && ['low', 'medium'].includes(a.effort || 'low')) return { model, effort: 'medium' };
+  // Writing skills, minutes and playbook rules: at least the effort the caller asked for.
+  if (['skill', 'minutes'].includes(kind) && EFFORTS.includes(requested)) {
+    const own = a.effort || 'medium';
+    return { model, effort: EFFORTS.indexOf(requested) > EFFORTS.indexOf(own) ? requested : own };
+  }
   return { model, effort: ['meeting', 'retro', 'standup'].includes(kind) ? 'low' : a.effort || 'medium' };
+}
+
+/** Drop saved fields that are the same as a built-in's current or any earlier default. */
+function pruneOverrides(id) {
+  const o = state.agentOverrides[id];
+  const base = BUILTIN.find((a) => a.id === id);
+  if (!o || !base) return false;
+  let changed = false;
+  for (const k of DEFAULT_FIELDS) {
+    if (o[k] === undefined) continue;
+    const same = JSON.stringify(o[k]) === JSON.stringify(base[k]) || (typeof o[k] === 'string' && typeof base[k] === 'string' && o[k].trim() === base[k].trim());
+    if (same || (LEGACY[id]?.[k] || []).includes(fingerprint(o[k]))) {
+      delete o[k];
+      changed = true;
+    }
+  }
+  if (!Object.keys(o).length) delete state.agentOverrides[id];
+  return changed;
 }
 
 /** Built-ins with any edits from the UI applied on top. */
@@ -215,6 +251,7 @@ export function updateAgent(id, { name, role, persona, specialties, web, compute
     if (w !== undefined) custom.tools = w ? [...FILES, ...WEB] : FILES;
   } else if (BUILTIN.some((a) => a.id === id)) {
     state.agentOverrides[id] = { ...state.agentOverrides[id], ...patch };
+    pruneOverrides(id); // fields left at their default stay unfrozen
   } else {
     return null;
   }
@@ -282,7 +319,7 @@ export function agentSkills(agentId) {
 /** Find an installed skill by name (case-insensitive). */
 export const skillByName = (name) => {
   const want = String(name).trim().toLowerCase();
-  return Object.values(state.skills).find((s) => s.name.toLowerCase() === want && s.status !== 'failed') || null;
+  return Object.values(state.skills).find((s) => s.name.toLowerCase() === want && s.status === 'active') || null;
 };
 
 /** A bot's core skills, resolved: [{ name, skill | null }]. */
@@ -336,8 +373,11 @@ export function systemPrompt(agent) {
   return `${agent.persona}
 ${
     core.length
-      ? `\nCORE SKILLS: open the SKILL.md of each one that applies (Read) before you start, and follow it.
-${core.map((c) => (c.skill ? `- ${c.skill.name} → ${c.skill.path || '(written skill: see below)'}` : `- ${c.name}: not installed; work without it and say so`)).join('\n')}\n`
+      ? `\nCORE SKILLS: ${agent.id === 'ceo' ? 'when you plan or brief work' : 'before you start a task'}, open the SKILL.md of each one that applies (Read) and follow it${agent.id === 'ceo' ? ' (not for reviews, chats or reports)' : ''}.
+${core.map((c) => (c.skill ? `- ${c.skill.name} → ${c.skill.path || '(written skill: see below)'}` : `- ${c.name}: not installed; work without it and say so`)).join('\n')}\n${core
+          .filter((c) => c.skill && !c.skill.path)
+          .map((c) => `\n### Skill: ${c.skill.name}\n${c.skill.body}\n`)
+          .join('')}`
       : ''
   }
 ${COMPANY}

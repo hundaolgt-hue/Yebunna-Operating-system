@@ -7,8 +7,8 @@ import { complete, extractJson } from './llm.js';
 import { state, save, now } from './store.js';
 import { bus } from './bus.js';
 import { logActivity } from './activity.js';
-import { limited } from './limits.js';
-import { resolveTask, missionFor } from './matching.js';
+import { limited, isLimitError } from './limits.js';
+import { resolveTask, missionFor, isRoutine } from './matching.js';
 
 const CEO_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 
@@ -18,8 +18,8 @@ const clip = (x, n) => (String(x).length > n ? `${String(x).slice(0, n)}…` : S
 function companyState(waiting) {
   const missions = Object.values(state.missions)
     .filter((m) => LIVE.includes(m.status) || (m.status === 'done' && Date.now() - Date.parse(m.completedAt || 0) < 14 * 864e5))
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-    .slice(0, 6)
+    .sort((a, b) => isRoutine(a) - isRoutine(b) || String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, 8)
     .map((m) => {
       const tasks = m.taskIds.map((id) => state.tasks[id]).filter(Boolean);
       const said = m.thread.filter((i) => i.role === 'user').slice(-3).map((i) => clip(i.text, 120));
@@ -32,6 +32,36 @@ Files the founder sent in the last 24 h:\n${(state.telegram?.uploads || []).filt
 Waiting on the founder:\n${waiting.map((w, i) => `${i + 1}. ${w.label}`).join('\n') || '- nothing'}${state.limit ? `\nPAUSED on the usage limit until ${state.limit.resetAt}.` : ''}`;
 }
 
+/** A list of actions, even when the JSON has small mistakes (a trailing comma, one object). */
+function parseActions(src) {
+  const body = String(src).trim();
+  const tries = [body, body.replace(/,\s*([\]}])/g, '$1')];
+  const a = body.indexOf('[');
+  const b = body.lastIndexOf(']');
+  if (a >= 0 && b > a) tries.push(body.slice(a, b + 1), body.slice(a, b + 1).replace(/,\s*([\]}])/g, '$1'));
+  for (const t of tries) {
+    try {
+      const v = JSON.parse(t);
+      return Array.isArray(v) ? v : [v];
+    } catch {}
+  }
+  return [extractJson(body)];
+}
+
+/** Messages that arrived while the usage limit was hit are acted on once it resets. */
+bus.on('limit.reset', async () => {
+  const pending = (state.ceoPending || []).splice(0);
+  for (const p of pending) {
+    try {
+      const reply = await ceoChat(p.text, { via: p.via, focus: p.focus, replay: true });
+      if (p.via !== 'app') {
+        const { notifyFounder } = await import('./telegram.js');
+        notifyFounder(`(About your message “${String(p.text).slice(0, 60)}”)\n${reply}`);
+      }
+    } catch {}
+  }
+});
+
 /** The conversation the CEO sees: the last messages, whatever missions were started in between. */
 const recentContext = (history) => history.slice(-10);
 
@@ -40,23 +70,34 @@ const recentContext = (history) => history.slice(-10);
  * after carrying out any actions it decided on.
  * focus: optional { missionId } when the founder replied to a message about a mission.
  */
-export async function ceoChat(text, { via = 'telegram', focus = null, attachments = [] } = {}) {
+let turns = Promise.resolve();
+/** One message at a time (app and Telegram share the conversation): each sees the previous reply. */
+export function ceoChat(text, opts = {}) {
+  const run = turns.catch(() => {}).then(() => ceoTurn(text, opts));
+  turns = run;
+  return run;
+}
+
+async function ceoTurn(text, { via = 'telegram', focus = null, attachments = [], replay = false } = {}) {
   const { waitingItems, answerItem } = await import('./telegram.js');
   const { createMission, sendToMission, amendTask } = await import('./orchestrator.js');
   const { addRule } = await import('./playbook.js');
   const ceo = getAgent('ceo');
   const history = (state.chats.ceo ||= []);
   if (attachments.length) text = `${text}\n\n(Attached — saved in the workspace: ${attachments.join(', ')})`;
-  history.push({ role: 'user', content: text, via, at: now() });
+  if (!replay) history.push({ role: 'user', content: text, via, at: now() });
   save();
   bus.emit('event', { type: 'chat', agentId: 'ceo' });
 
-  if (limited()) {
-    const msg = `We're paused on your Claude usage limit until ${new Date(state.limit.resetAt).toLocaleString()}, so I can't think this through right now. I've saved your message — send it again after the reset, or /resume to try now.`;
+  // Paused on the usage limit: keep the message and act on it as soon as the limit resets.
+  const later = () => {
+    (state.ceoPending ||= []).push({ text, via, focus });
+    const msg = `⏸ We're paused on your Claude usage limit${state.limit?.resetAt ? ` until ${new Date(state.limit.resetAt).toLocaleString()}` : ''}. I've kept your message and will act on it as soon as the limit resets (/resume to try now).`;
     history.push({ role: 'assistant', content: msg, via, at: now() });
     save();
     return msg;
-  }
+  };
+  if (limited()) return later();
 
   const waiting = waitingItems();
   const focused = focus?.missionId && state.missions[focus.missionId];
@@ -73,7 +114,7 @@ ${focused ? `\nThe founder is replying about mission ${focused.id} (${focused.ti
 CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one block:
 \`\`\`actions
 [ ...one or more of:
-  {"type": "edit", "task": "<task id>", "text": "<the change, complete and specific>"},
+  {"type": "edit", "mission": "<mission id>", "task": "<task id from the list>", "text": "<the change, complete and specific>"},
   {"type": "add", "mission": "<mission id>", "text": "<new work for that product, with every detail>"},
   {"type": "mission", "goal": "<a NEW product: the work, with every detail the founder gave>", "deadline_hours": <number>},
   {"type": "answer", "item": <number from Waiting on the founder>, "text": "<the founder's answer>"},
@@ -107,6 +148,7 @@ CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one bl
       demo: () => `On it.\n\n\`\`\`actions\n${JSON.stringify([demoAction(text, focused)])}\n\`\`\``,
     });
   } catch (e) {
+    if (isLimitError(e)) return later();
     const msg = `⚠️ I couldn't reply: ${e.message}`;
     history.push({ role: 'assistant', content: msg, via, at: now() });
     save();
@@ -114,23 +156,19 @@ CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one bl
   }
 
   // Carry out the actions.
-  const block = reply.match(/```actions\s*([\s\S]*?)```/);
+  const blocks = [...reply.matchAll(/```actions[^\n]*\n?([\s\S]*?)```/g)];
   const done = [];
   let missionId = null;
-  if (block) {
+  if (blocks.length) {
     let actions = [];
-    try {
-      let parsed;
+    for (const block of blocks) {
       try {
-        parsed = JSON.parse(block[1].trim());
+        actions.push(...parseActions(block[1]));
       } catch {
-        parsed = extractJson(block[1]);
+        done.push("⚠️ I couldn't read my own action list — nothing was started from it. Say it again?");
       }
-      actions = Array.isArray(parsed) ? parsed : [parsed];
-    } catch {
-      done.push("⚠️ I couldn't read my own action list — nothing was started. Say it again?");
     }
-    for (const a of actions.slice(0, 6)) {
+    for (const a of actions.filter((x) => x && typeof x === 'object').slice(0, 8)) {
       try {
         // Guard: work about a product that already has a mission goes to that mission.
         const existing = a.type === 'mission' && a.goal && !/\b(new|another|next|different)\s+(product|template|idea)\b/i.test(text) && (focused || missionFor(`${a.goal} ${text}`));
@@ -181,7 +219,7 @@ CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one bl
       }
     }
   }
-  const clean = reply.replace(/```actions[\s\S]*?```/, '').trim();
+  const clean = reply.replace(/```actions[\s\S]*?```/g, '').trim();
   const full = [clean, ...done].filter(Boolean).join('\n\n') || 'OK.';
   history.push({ role: 'assistant', content: full, via, at: now(), ...(missionId ? { missionId } : {}) });
   if (history.length > 200) history.splice(0, history.length - 200);

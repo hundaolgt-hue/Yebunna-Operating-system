@@ -35,3 +35,13 @@ test("prompts are lean: no team roster for specialists, no notes from past missi
   assert.doesNotMatch(p, /Your team \(id/, 'no roster for specialists');
   assert.match(systemPrompt(getAgent('ceo')), /Your team \(id/);
 });
+
+test('saving a bot without changing its job description does not freeze it', async () => {
+  const { state } = await import('../src/store.js');
+  const pixel = getAgent('design');
+  updateAgent('design', { persona: pixel.persona, role: pixel.role, specialties: pixel.specialties, computer: true });
+  assert.deepEqual(state.agentOverrides.design, { computer: true }, 'only the real change is kept');
+  updateAgent('design', { persona: 'You are Pixel. Custom.' });
+  assert.equal(getAgent('design').persona, 'You are Pixel. Custom.', 'a real edit still wins');
+  resetAgent('design');
+});

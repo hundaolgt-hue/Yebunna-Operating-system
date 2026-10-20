@@ -34,3 +34,9 @@ test('work that names an existing product goes to its mission; a new product doe
   assert.equal(missionFor('Build a new product: ProfitCheck for cafes'), null);
   assert.equal(missionFor('Construction cost template for villas'), null, 'generic words never match');
 });
+
+test('a casual yes approves; anything with a change in it does not', async () => {
+  const { isYes } = await import('../src/telegram.js');
+  for (const t of ['Yes please', 'looks good, ship it', '👍', 'አዎ', 'approve']) assert.equal(isYes(t), true, t);
+  for (const t of ['great but make it shorter', 'ok?', 'no', 'Change the headline']) assert.equal(isYes(t), false, t);
+});

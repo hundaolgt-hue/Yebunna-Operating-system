@@ -67,7 +67,7 @@ function card(c) {
         <div class="pick">${S.agents
           .map((a) => `<label class="pick-item"><input type="checkbox" name="bots" value="${a.id}" ${all || c.bots.includes(a.id) ? 'checked' : ''}/>${avatar(a.id, 'sm')}<span>${esc(a.name)}<small>${esc(a.role)}</small></span></label>`)
           .join('')}</div>`}
-        <div class="row-btns end">${c.enabled ? '<button class="btn-ghost danger" value="remove">Disconnect</button>' : ''}<button class="btn" value="save">Save & test</button></div>
+        <div class="row-btns end">${c.enabled || c.status || Object.values(c.config || {}).some(Boolean) ? '<button class="btn-ghost danger" value="remove">Disconnect</button>' : ''}<button class="btn" value="save">Save & test</button></div>
       </form>
     </details>
   </section>`;

@@ -62,13 +62,18 @@ export function skillFromTask(t) {
 Task: ${t.title}
 Brief: ${t.brief}
 Deliverable expected: ${t.deliverable}
-Result:
-${t.output.slice(0, 8000)}
+Handover:
+${t.output.slice(0, 4000)}
+How the bot worked (its notes and tool use, latest part):
+${String(t.reasoning || '').slice(-4000)}
+${t.workDir ? `The files it made are in ${t.workDir}/ — open them (Read, Glob) to see what good output looks like.` : ''}
 
 ${SKILL_FORMAT}`,
         },
       ],
       effort: 'medium',
+      tools: t.workDir ? ['Read', 'Glob'] : [],
+      maxTurns: 12,
       agentId: t.agentId,
       kind: 'skill',
       demo: () => demoSkill(t.title),

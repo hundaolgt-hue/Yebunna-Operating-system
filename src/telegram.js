@@ -74,10 +74,24 @@ export function waitingItems() {
   return items.sort((a, b) => String(a.at).localeCompare(String(b.at)));
 }
 
-const YES = /^(approve|approved|yes|ok|okay|go|👍|✅)\.?!?$/i;
+// "Yes please", "looks good, ship it", "👍" approve; anything with a change in it does not.
+const YES_START = /^\s*(approve[sd]?|yes|yep|yeah|ok|okay|go( ahead)?|looks good|lgtm|ship it|perfect|great|good|fine|done|👍|✅|አዎ|እሺ)(?=[\s.,!?;:]|$)/i;
+const CHANGE = /\b(but|except|change|instead|however|fix|replace|remove|add|make it|should|shorter|longer|redo)\b|\?/i;
+export const isYes = (text) => (YES_START.test(text) || /^\s*(👍|✅)/.test(text)) && !CHANGE.test(text);
+
+/** Is this item still waiting on the founder? */
+export function itemOpen(ref) {
+  if (ref.type === 'task') return state.tasks[ref.id]?.status === 'founder';
+  if (ref.type === 'approval') return state.tasks[ref.id]?.status === 'approval';
+  if (ref.type === 'plan') return state.missions[ref.id]?.status === 'awaiting_approval';
+  return false;
+}
+
+/** The mission an alert is about. */
+export const missionOf = (ref) => (ref.type === 'mission' || ref.type === 'plan' ? ref.id : state.tasks[ref.id]?.missionId) || null;
 
 export async function answerItem(ref, text) {
-  const { answerTask, approvePlan, decideTask } = await import('./orchestrator.js');
+  const { answerTask, approvePlan, decideTask, sendToMission } = await import('./orchestrator.js');
   if (ref.type === 'task') {
     const t = state.tasks[ref.id];
     if (t?.status !== 'founder') return 'That one is already handled.';
@@ -87,13 +101,18 @@ export async function answerItem(ref, text) {
   if (ref.type === 'approval') {
     const t = state.tasks[ref.id];
     if (t?.status !== 'approval') return 'That one is already handled.';
-    decideTask(t, YES.test(text.trim()) ? { approve: true } : { approve: false, feedback: text });
-    return YES.test(text.trim()) ? `✅ Approved “${t.title}”.` : `↩️ Sent “${t.title}” back with your changes.`;
+    const yes = isYes(text);
+    decideTask(t, yes ? { approve: true } : { approve: false, feedback: text });
+    return yes ? `✅ Approved “${t.title}”.` : `↩️ Sent “${t.title}” back with your changes.`;
   }
   if (ref.type === 'plan') {
     const m = state.missions[ref.id];
     if (m?.status !== 'awaiting_approval') return 'That plan is already handled.';
-    if (!YES.test(text.trim())) return 'Reply “approve” to start the plan, or change it in Yebunna OS.';
+    if (!isYes(text)) {
+      // A change to the plan: the CEO updates it (and it still waits for your OK).
+      sendToMission(m, { text, mode: 'delegate' });
+      return `📝 Updating the plan for “${m.title}” with your changes. I'll send it back for your OK.`;
+    }
     approvePlan(m);
     return `✅ Plan approved — the team is starting “${m.title}”.`;
   }
@@ -107,7 +126,7 @@ async function healthText() {
   const d = state.disk;
   return [
     `Engine: ${p.name === 'demo' ? '⚠️ offline demo — Claude Code was not found' : `Claude Code ${p.cli || ''}`}`,
-    `Claude runs: ${r.running} busy of ${r.max} (+1 kept free for you), ${r.waiting} waiting`,
+    `Claude runs: ${r.running} busy of ${r.max} (your messages go first), ${r.waiting} waiting`,
     state.limit ? `⏸ Paused (${state.limit.kind === 'disk' ? 'disk almost full' : 'usage limit'}) until ${new Date(state.limit.resetAt).toLocaleString()}` : '▶️ Not paused',
     d ? `Disk: ${(d.free / 1024 ** 3).toFixed(1)} GB free${d.saveError ? ` — ${d.saveError}` : ''}` : null,
     `Telegram: ${health.lastError ? `last error ${health.lastError}` : 'OK'}`,
@@ -181,20 +200,34 @@ async function onMessage(msg) {
   // A reply to one of our alerts answers that item (or, for a mission message, talks to the CEO about it).
   const repliedTo = msg.reply_to_message?.message_id;
   const sent = repliedTo && tg().sent.find((s) => s.messageId === repliedTo);
-  if (sent && sent.ref.type !== 'mission') return reply(await answerItem(sent.ref, text));
+  // An alert that still waits on you is answered directly; a reply to an old one goes to the CEO about that mission.
+  if (sent && sent.ref.type !== 'mission' && itemOpen(sent.ref)) return reply(await answerItem(sent.ref, text));
+  const focusId = sent ? missionOf(sent.ref) : null;
 
-  // Everything else is a conversation with the CEO, who can act on it.
-  typing();
-  const keepTyping = setInterval(typing, 4500);
-  const slow = setTimeout(() => reply('⏳ Still thinking — I am checking the team’s work. I will answer here in a moment.'), 60_000);
-  try {
-    const { ceoChat } = await import('./ceochat.js');
-    return reply(await ceoChat(text, { via, attachments, focus: sent ? { missionId: sent.ref.id } : null }));
-  } finally {
-    clearInterval(keepTyping);
-    clearTimeout(slow);
-  }
+  // Everything else is a conversation with the CEO, who can act on it. One at a time, in order,
+  // so two quick messages never act on the same thing twice.
+  const turn = (ceoTurns = ceoTurns.catch(() => {}).then(async () => {
+    typing();
+    const keepTyping = setInterval(typing, 4500);
+    const slow = setTimeout(() => reply('⏳ Still thinking — I am checking the team’s work. I will answer here in a moment.'), 60_000);
+    try {
+      const { ceoChat } = await import('./ceochat.js');
+      const answer = await ceoChat(text, { via, attachments, focus: focusId ? { missionId: focusId } : null });
+      // Replying to this answer keeps talking about the mission it started or acted on.
+      const about = state.chats.ceo?.at(-1)?.missionId || focusId;
+      const ids = await sendLong(answer, msg.message_id);
+      if (about && ids.length) {
+        tg().sent = [{ messageId: ids[0], ref: { type: 'mission', id: about }, at: now() }, ...tg().sent].slice(0, 200);
+        save();
+      }
+    } finally {
+      clearInterval(keepTyping);
+      clearTimeout(slow);
+    }
+  }));
+  return turn;
 }
+let ceoTurns = Promise.resolve();
 
 function typing() {
   call(cfg().config.token, 'sendChatAction', { chat_id: cfg().config.chatId, action: 'typing' }).catch(() => {});
@@ -210,9 +243,12 @@ async function sendLong(text, replyTo) {
     rest = rest.slice(cut).trimStart();
   }
   parts.push(rest);
+  const ids = [];
   for (const [i, part] of parts.entries()) {
-    await call(cfg().config.token, 'sendMessage', { chat_id: cfg().config.chatId, text: part, ...(i === 0 && replyTo ? { reply_to_message_id: replyTo } : {}) }).catch(() => {});
+    const sentMsg = await call(cfg().config.token, 'sendMessage', { chat_id: cfg().config.chatId, text: part, ...(i === 0 && replyTo ? { reply_to_message_id: replyTo } : {}) }).catch(() => null);
+    if (sentMsg?.message_id) ids.push(sentMsg.message_id);
   }
+  return ids;
 }
 
 /** Download a file the founder sent and keep it in references/<date>/. Bots can't use files over 20 MB from Telegram. */

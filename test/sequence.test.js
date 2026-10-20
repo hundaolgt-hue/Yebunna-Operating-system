@@ -8,7 +8,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'yebunna-seq-'));
 process.env.DEMO_MODE = '1';
 process.env.DATA_DIR = path.join(TMP, 'data');
 process.env.WORKSPACE_DIR = path.join(TMP, 'ws');
-const { createMissionWithTasks, amendTask, missionTasks } = await import('../src/orchestrator.js');
+const { createMission, createMissionWithTasks, amendTask, missionTasks, sendToMission, cancelMission } = await import('../src/orchestrator.js');
 const { ceoChat } = await import('../src/ceochat.js');
 const { state } = await import('../src/store.js');
 const { bus } = await import('../src/bus.js');
@@ -79,4 +79,27 @@ test('the CEO never starts a second mission for a product that already has one',
   assert.equal(Object.keys(state.missions).length, before, 'no new mission');
   assert.match(reply, /Added to “Product C”/);
   await until(() => m.status === 'done', 'the added work');
+});
+
+test('a cancelled mission stays cancelled even with a follow-up waiting', async () => {
+  const m = createMission({ goal: 'Product D', deadline: inHours(4) });
+  sendToMission(m, { text: 'Also add a TikTok video', mode: 'delegate' }); // queued: the CEO is planning
+  assert.equal(m.queue.length, 1);
+  cancelMission(m);
+  await sleep(3000);
+  assert.equal(m.status, 'cancelled');
+  assert.ok(missionTasks(m).every((t) => t.status === 'failed'), 'nothing runs');
+});
+
+test('several changes to a running task are all kept', async () => {
+  // Earlier missions run first (one task at a time); none may get stuck.
+  await until(() => Object.values(state.missions).every((x) => ['done', 'cancelled', 'failed'].includes(x.status)), 'earlier missions to finish', 240_000);
+  const m = createMissionWithTasks({ goal: 'Product E', deadline: inHours(4), specs: [{ agent: 'design', title: 'Make 3 ad stills', brief: 'stills', deliverable: 'png', due_in_hours: 1, size: 'small' }] });
+  const t = missionTasks(m)[0];
+  await until(() => t.status === 'in_progress', 'the task to start');
+  amendTask(t, 'Use a dark background');
+  amendTask(t, 'Add the price 1,500 ብር');
+  await until(() => m.status === 'done', 'the mission');
+  assert.match(t.brief, /dark background/);
+  assert.match(t.brief, /1,500 ብር/);
 });

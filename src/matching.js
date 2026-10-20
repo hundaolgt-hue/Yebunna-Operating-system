@@ -24,6 +24,9 @@ export function overlap(a, b, minShared = 1) {
   return shared < minShared ? 0 : shared / Math.min(A.size, B.size);
 }
 
+/** Missions a routine started rank after the founder's own. */
+export const isRoutine = (m) => String(m.source || '').startsWith('routine') || String(m.source || '').startsWith('meeting');
+
 const tasksOf = (m) => m.taskIds.map((id) => state.tasks[id]).filter(Boolean);
 
 /**
@@ -75,10 +78,14 @@ export function missionFor(goal) {
   const live = Object.values(state.missions).filter(
     (m) => ['planning', 'running', 'reporting', 'awaiting_approval', 'failed'].includes(m.status) || (m.status === 'done' && Date.now() - Date.parse(m.completedAt || 0) < 14 * 864e5),
   );
+  const distinct = (text) => [...words(text)].filter((w) => !GENERIC.has(w) && w.length >= 4);
+  const hits = (text) => distinct(text).filter((w) => goalWords.has(w)).length;
   return (
     live
-      .filter((m) => m.product)
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-      .find((m) => [...words(m.product)].some((w) => !GENERIC.has(w) && w.length >= 4 && goalWords.has(w))) || null
+      // The founder's own missions before routine ones; newest first.
+      .sort((a, b) => isRoutine(a) - isRoutine(b) || String(b.createdAt).localeCompare(String(a.createdAt)))
+      // Its product's name (one distinctive word is enough), or — before the CEO has named the
+      // product — two distinctive words of its title.
+      .find((m) => (m.product ? hits(m.product) >= 1 : hits(m.title) >= 2)) || null
   );
 }

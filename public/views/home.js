@@ -1,4 +1,4 @@
-import { S, $, $$, api, esc, avatar, composer, wireComposer, view } from '../core.js';
+import { S, $, $$, api, esc, avatar, composer, wireComposer, view, toast } from '../core.js';
 import { newMeetingDialog } from './meetings.js';
 import { teachDialog } from './skills.js';
 import { newBotDialog } from './team.js';
@@ -62,6 +62,7 @@ export function renderHome() {
         : new Date(Date.now() + DEADLINES.find(([val]) => val === sel.value)[2] * 36e5).toISOString();
     const m = await api('/api/missions', { method: 'POST', body: { goal, deadline } });
     S.missions[m.id] = m;
+    if (m.routed) toast(`That's about “${m.title}”, so I added it to that mission.`);
     location.hash = `#/m/${m.id}`;
   });
   $$('[data-suggest]', v).forEach((b) =>

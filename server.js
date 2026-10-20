@@ -26,6 +26,7 @@ import { resume as resumeAfterLimit } from './src/limits.js';
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
 import { ceoChat } from './src/ceochat.js';
+import { missionFor } from './src/matching.js';
 import { seedHouseSkills } from './src/house.js';
 import { storageReport } from './src/disk.js';
 import { referencePath, MAX_UPLOAD } from './src/references.js';
@@ -180,6 +181,13 @@ const routes = {
   'POST /api/missions': async (req, res) => {
     const { goal, deadline } = await readBody(req);
     need(goal?.trim(), 400, 'goal is required');
+    // About a product that already has a mission (its name is in the text): it goes there, never a duplicate.
+    const existing = missionFor(goal);
+    if (existing) {
+      if (existing.status === 'cancelled') existing.status = 'done';
+      sendToMission(existing, { text: goal.trim(), mode: 'delegate' });
+      return send(res, 200, { ...existing, routed: true });
+    }
     send(res, 201, createMission({ goal: goal.trim(), deadline: futureDeadline(deadline) }));
   },
   'POST /api/missions/:id/messages': async (req, res, { id }) => {
@@ -683,7 +691,7 @@ server.listen(PORT, () => {
   const p = providerInfo();
   console.log(`Yebunna OS running at http://localhost:${PORT}`);
   console.log(`Shared workspace: ${WORKSPACE}`);
-  console.log(`Saved data: ${loadInfo.file}${loadInfo.found ? '' : ' (none yet: a new, empty setup; to bring back an earlier setup, copy its data folder here)'}`);
+  console.log(`Saved data: ${loadInfo.file}${loadInfo.found ? '' : loadInfo.recovered ? ` (could not be read: a copy is at ${loadInfo.recovered}; started empty)` : loadInfo.readOnly ? ' (could not be read: NOTHING IS SAVED this session; restart after closing programs that lock it)' : ' (none yet: a new, empty setup; to bring back an earlier setup, copy its data folder here)'}`);
   if (p.name !== 'demo') return console.log(`Engine: Claude via Claude Code ${p.cli} — model: ${p.model}`);
   console.log('Engine: offline demo (install Claude Code and run `claude` once to log in with your subscription)');
   const tried = detectionReport();

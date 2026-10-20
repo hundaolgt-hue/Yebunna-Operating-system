@@ -12,13 +12,16 @@
 // A new version replaces the old one: the task's Drive folder is emptied and refilled, so
 // Drive only ever holds the latest version (Drive keeps deleted files in its trash for 30 days).
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { WORKSPACE, now } from './store.js';
+import { WORKSPACE, now, state } from './store.js';
 import { driveOutputRoot } from './connections.js';
 
 // Working files that are never published.
 const SKIP_DIRS = new Set(['frames', 'tmp', 'temp', 'cache', '.cache', 'node_modules', '.git', '__pycache__', '.venv', 'venv']);
 const MAX_FILES = 300;
+const MAX_BYTES = 2 * 1024 ** 3; // larger files stay in the workspace (named in the handover)
+const RM = { recursive: true, force: true, maxRetries: 6, retryDelay: 500 }; // Drive may hold a file open for a moment
 
 /** A name that is safe on Windows and in Drive, and reads well. */
 export function cleanName(s, max = 60) {
@@ -44,9 +47,18 @@ export const versioned = (file, version, at) => {
   return `${path.basename(file, ext)}_v${version}_${stamp(at)}${ext}`;
 };
 
-/** The mission's folder in Drive: "<date> <product>", fixed once chosen so it never duplicates. */
+/**
+ * The mission's folder in Drive: "<date> <product>", fixed once chosen. Two missions never share
+ * a folder: a second one with the same name gets " (2)", " (3)" …
+ */
 function missionDir(root, m) {
-  m.driveFolder ||= cleanName(`${m.createdAt.slice(0, 10)} ${m.product || m.title}`, 70);
+  if (!m.driveFolder) {
+    const base = cleanName(`${m.createdAt.slice(0, 10)} ${m.product || m.title}`, 64);
+    const taken = new Set(Object.values(state.missions).filter((x) => x.id !== m.id && x.driveFolder).map((x) => x.driveFolder.toLowerCase()));
+    let name = base;
+    for (let i = 2; taken.has(name.toLowerCase()) || (fs.existsSync(path.join(root, name)) && i < 100); i++) name = `${base} (${i})`;
+    m.driveFolder = name;
+  }
   return path.join(root, m.driveFolder);
 }
 
@@ -72,38 +84,52 @@ function workFiles(dir) {
 }
 
 /**
- * Copy a finished task to Drive as a new version, replacing the previous one.
- * Returns the Drive folder (relative to the output root), or null when Drive isn't connected.
+ * Copy a finished task to Drive as a new version, replacing the previous one. The new version is
+ * written next to the old one first and swapped in at the end, so a locked or failed copy never
+ * leaves Drive with half a version. Returns the Drive folder, or null when Drive isn't connected.
  */
-export function publishTask(m, t, agentName) {
+export async function publishTask(m, t, agentName) {
   const root = driveOutputRoot();
   if (!root) return null;
-  t.version = (t.version || 0) + 1;
+  const version = (t.version || 0) + 1;
   const n = String(m.taskIds.indexOf(t.id) + 1).padStart(2, '0');
   t.driveFolder ||= cleanName(`${n} ${t.title} (${agentName})`, 80);
   const dir = path.join(missionDir(root, m), t.driveFolder);
-  fs.rmSync(dir, { recursive: true, force: true }); // the old version goes
-  fs.mkdirSync(dir, { recursive: true });
+  const next = `${dir}.new`;
+  await fsp.rm(next, RM);
+  await fsp.mkdir(next, { recursive: true });
   const at = t.completedAt || now();
   const src = t.workDir && path.join(WORKSPACE, t.workDir);
+  const kept = [];
   for (const rel of src ? workFiles(src) : []) {
-    const to = path.join(dir, path.dirname(rel), versioned(path.basename(rel), t.version, at));
-    fs.mkdirSync(path.dirname(to), { recursive: true });
-    fs.copyFileSync(path.join(src, rel), to);
+    const from = path.join(src, rel);
+    if (fs.statSync(from).size > MAX_BYTES) {
+      kept.push(rel);
+      continue;
+    }
+    const to = path.join(next, path.dirname(rel), versioned(path.basename(rel), version, at));
+    await fsp.mkdir(path.dirname(to), { recursive: true });
+    await fsp.copyFile(from, to);
   }
-  fs.writeFileSync(path.join(dir, versioned('Handover.md', t.version, at)), `# ${t.title}\n\n_${agentName} · version ${t.version} · ${stamp(at).replace('_', ' ')}_\n\n${t.output}\n`);
+  const note = kept.length ? `\n\n_Too large for Drive, kept on the PC in ${t.workDir}/: ${kept.join(', ')}_` : '';
+  await fsp.writeFile(path.join(next, versioned('Handover.md', version, at)), `# ${t.title}\n\n_${agentName} · version ${version} · ${stamp(at).replace('_', ' ')}_\n\n${t.output}${note}\n`);
+  await fsp.rm(dir, RM); // the old version goes
+  await fsp.rename(next, dir);
+  t.version = version;
   return path.join(m.driveFolder, t.driveFolder);
 }
 
 /** Write the mission report to Drive as a new version, replacing the previous one. */
-export function publishReport(m, text) {
+export async function publishReport(m, text) {
   const root = driveOutputRoot();
   if (!root) return null;
   const dir = missionDir(root, m);
-  fs.mkdirSync(dir, { recursive: true });
-  for (const f of fs.readdirSync(dir)) if (/^00 Mission report_v\d+_/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
-  m.reportVersion = (m.reportVersion || 0) + 1;
+  await fsp.mkdir(dir, { recursive: true });
+  const version = (m.reportVersion || 0) + 1;
   const at = m.completedAt || now();
-  fs.writeFileSync(path.join(dir, versioned('00 Mission report.md', m.reportVersion, at)), `# Mission report: ${m.product || m.title}\n\n_version ${m.reportVersion} · ${stamp(at).replace('_', ' ')}_\n\n${text}\n`);
+  const file = versioned('00 Mission report.md', version, at);
+  await fsp.writeFile(path.join(dir, file), `# Mission report: ${m.product || m.title}\n\n_version ${version} · ${stamp(at).replace('_', ' ')}_\n\n${text}\n`);
+  for (const f of await fsp.readdir(dir)) if (f !== file && /^00 Mission report_v\d+_/.test(f)) await fsp.rm(path.join(dir, f), RM);
+  m.reportVersion = version;
   return m.driveFolder;
 }

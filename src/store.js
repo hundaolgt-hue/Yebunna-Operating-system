@@ -32,6 +32,7 @@ export const state = {
   limit: null, // { since, resetAt, known } while paused on the Claude usage limit
   telegram: { sent: [], offset: 0 }, // alerts sent (for matching replies) and the polling offset
   lastRetroAt: null,
+  ceoPending: [], // CEO chat messages kept while paused on the usage limit
   disk: null, // free space on the workspace drive
   settings: {
     approvePlans: false,
@@ -42,30 +43,49 @@ export const state = {
   },
 };
 
-export const loadInfo = { file: FILE, found: false, recovered: null };
+export const loadInfo = { file: FILE, found: false, recovered: null, readOnly: false };
 if (fs.existsSync(FILE)) {
-  try {
-    const saved = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+  let saved = null;
+  let lastErr = null;
+  // A file locked for a moment (antivirus, OneDrive, Drive sync) is retried before giving up.
+  for (let attempt = 0; attempt < 5 && !saved; attempt++) {
+    try {
+      saved = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    } catch (e) {
+      lastErr = e;
+      if (e instanceof SyntaxError) break;
+      const until = Date.now() + 400;
+      while (Date.now() < until); // short synchronous wait: this runs once, at start
+    }
+  }
+  if (saved) {
     for (const key of Object.keys(state)) {
       if (saved[key]) state[key] = key === 'settings' ? { ...state.settings, ...saved.settings } : saved[key];
     }
+    for (const k of ['usageMode', 'economy', 'opusForLarge']) delete state.settings[k]; // retired settings
+    delete state.ceoContextAt;
     loadInfo.found = true;
-  } catch (e) {
-    // Never overwrite saved data we couldn't read: keep a copy the founder can restore.
+  } else {
+    // Never overwrite saved data we couldn't read. Keep a copy; if even that fails, don't save at all.
     const copy = path.join(DATA_DIR, `state.unreadable-${Date.now()}.json`);
     try {
       fs.copyFileSync(FILE, copy);
       loadInfo.recovered = copy;
-    } catch {}
-    console.error(`Could not read ${FILE} (${e.message}). A copy was kept at ${copy}.`);
+      console.error(`Could not read ${FILE} (${lastErr?.message}). A copy was kept at ${copy}. Starting with an empty setup.`);
+    } catch (e) {
+      loadInfo.readOnly = true;
+      console.error(`Could not read ${FILE} (${lastErr?.message}) and could not back it up (${e.message}). Nothing will be saved this session, so your data is safe. Close programs that may lock it (OneDrive, antivirus), then restart the app.`);
+    }
   }
 }
 
 let timer = null;
 let lastError = 0;
-export const saveStatus = { ok: true, error: null };
+export const saveStatus = loadInfo.readOnly
+  ? { ok: false, error: `Your saved data (${FILE}) could not be read, so nothing is saved right now to protect it. Close OneDrive/antivirus locks and restart the app.` }
+  : { ok: true, error: null };
 export function save() {
-  if (timer) return;
+  if (timer || loadInfo.readOnly) return;
   timer = setTimeout(() => {
     timer = null;
     const tmp = `${FILE}.tmp`;

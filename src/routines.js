@@ -90,6 +90,17 @@ export function fireRoutine(r, reason = 'manual') {
   const source = `routine:${r.id}`;
   const deadline = new Date(Date.now() + r.deadlineHours * 36e5).toISOString();
   const run = { at: now(), reason };
+  // The previous run's mission is still going: don't pile a second, overlapping one on top.
+  const prev = r.runs?.[0]?.ref?.type === 'mission' && state.missions[r.runs[0].ref.id];
+  if (prev && ['planning', 'running', 'reporting', 'awaiting_approval'].includes(prev.status) && ['assignment', 'skill', 'mission'].includes(r.kind)) {
+    run.note = 'The previous run is still in progress — skipped, so work doesn\'t overlap.';
+    run.ref = { type: 'mission', id: prev.id };
+    r.runs = [run, ...r.runs].slice(0, 20);
+    r.lastRunAt = run.at;
+    r.nextRunAt = r.enabled ? nextRun(r.schedule) : null;
+    emit(r);
+    return run;
+  }
   try {
     if (r.kind === 'assignment') {
       const m = createMissionWithTasks({

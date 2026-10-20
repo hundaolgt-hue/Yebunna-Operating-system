@@ -1,0 +1,210 @@
+{
+ "ceo": {
+  "persona": [
+   "40d16395724ded67",
+   "5a977fc517d8783f",
+   "6818c5ec6b873f10",
+   "95f4ab37c0829879",
+   "b6167fddd0da4872",
+   "cd39de7830e77bb3"
+  ],
+  "role": [
+   "60f3b525481fa0e6"
+  ],
+  "specialties": [
+   "75b8fcbf104001ae"
+  ],
+  "coreSkills": [
+   "4f53cda18c2baa0c",
+   "6e8ec65f103b8dda",
+   "b75564ad8ffe7535"
+  ]
+ },
+ "research": {
+  "persona": [
+   "16d814ffd6764f72",
+   "77946fcc458487f9",
+   "848b4f2fc6f6e816",
+   "98e2e4eeb45e6458",
+   "daaa7e201d9dbba6"
+  ],
+  "role": [
+   "8d44600f8014f895"
+  ],
+  "specialties": [
+   "b84d1d7e4cbc9130",
+   "e86cdf4ff0378d60"
+  ],
+  "coreSkills": [
+   "4f53cda18c2baa0c",
+   "b38514d697bc9273",
+   "ccc67cc06d37bf62"
+  ]
+ },
+ "product": {
+  "persona": [
+   "1736fa8f1492aaa7",
+   "29d0a02f4e406a7a",
+   "2aa9dfd240a24c13",
+   "6f227cf182a61fe9",
+   "f250d7d86f8f47a2"
+  ],
+  "role": [
+   "3ae4491e46eb7215"
+  ],
+  "specialties": [
+   "3b0933b186747964",
+   "df72b2a0fbba1d96"
+  ],
+  "coreSkills": [
+   "4f53cda18c2baa0c",
+   "8104197cd1994e95",
+   "ccf6a0b932828970"
+  ]
+ },
+ "engineer": {
+  "persona": [
+   "2de79467b1e71bc8",
+   "2e3f7e7ac1a59825",
+   "66527815b66f7b1a",
+   "8fa03c982a2f2a98",
+   "fd94417f5456174d"
+  ],
+  "role": [
+   "8453741af36f5369"
+  ],
+  "specialties": [
+   "3387dffb716b3830",
+   "798616205012afd5"
+  ],
+  "coreSkills": [
+   "358ee1e9391bc68d",
+   "4f53cda18c2baa0c"
+  ]
+ },
+ "design": {
+  "persona": [
+   "1f71ea19efa38c51",
+   "2fddfa962a12f4e4",
+   "56381f2cd6a0d550",
+   "58209a64194d3d4b",
+   "5b7898340ceb54f8"
+  ],
+  "role": [
+   "83da5025099b8c13",
+   "8e3e0bef357f64b8"
+  ],
+  "specialties": [
+   "17b04696efd86e32",
+   "6301cb6083d3f6c2"
+  ],
+  "coreSkills": [
+   "4f53cda18c2baa0c",
+   "8601d75d6617b503",
+   "f3101b7b5a2eb6ad"
+  ]
+ },
+ "creative": {
+  "persona": [
+   "03370292209c528e",
+   "34623bb5473cbb2d",
+   "53e047958eb909d1",
+   "9f1b195f78295bac"
+  ],
+  "role": [
+   "3f14a9108c6ac956",
+   "f167f5c2be7da876"
+  ],
+  "specialties": [
+   "2b59bf76cd97ca30",
+   "ad9f95ec7881c9cb"
+  ],
+  "coreSkills": [
+   "41cfdd34a5fe7e8c",
+   "4f53cda18c2baa0c",
+   "63b4da478837ffe6"
+  ]
+ },
+ "landing": {
+  "persona": [
+   "09685d600b76c2da",
+   "2506a3a8819d7cc2",
+   "6fbaaca35b495f8d",
+   "9c74a88b13605c1d"
+  ],
+  "role": [
+   "2cc415af6c6e8e5d"
+  ],
+  "specialties": [
+   "01f5cf6f91c508c1",
+   "822689b6b4d66d21"
+  ],
+  "coreSkills": [
+   "366f5843a6317f8f",
+   "45c417468832e33b",
+   "4f53cda18c2baa0c"
+  ]
+ },
+ "marketing": {
+  "persona": [
+   "08788c939ee1ea57",
+   "1610d2afe5d9ed35",
+   "304589182b1a8b1f",
+   "be42f543ba31430e",
+   "fb8a3ef9546b43a8"
+  ],
+  "role": [
+   "e608d46cecf48eab"
+  ],
+  "specialties": [
+   "d8323b932fe6e65e",
+   "f84ffee0670ee964"
+  ],
+  "coreSkills": [
+   "2cf6aafb21520be6",
+   "32049c169b65d576",
+   "4f53cda18c2baa0c"
+  ]
+ },
+ "sales": {
+  "persona": [
+   "16ddece027b33309",
+   "3cc8c67dbad910eb",
+   "9101d970c86d986b",
+   "d83af20d32d20e68",
+   "dfd4745f48630e60"
+  ],
+  "role": [
+   "6ce20a2648ece328"
+  ],
+  "specialties": [
+   "684ab81ed593360e",
+   "f323da47f74ade40"
+  ],
+  "coreSkills": [
+   "4f53cda18c2baa0c",
+   "6f5e140e1fad8b18",
+   "970161486fa2d346"
+  ]
+ },
+ "support": {
+  "persona": [
+   "0942e6e33f08c0cb",
+   "292a35916480764e",
+   "3af3592282ba8b0c",
+   "853c00cb860c6c6b",
+   "891bdb2260923343"
+  ],
+  "role": [
+   "e6f20d25f8839639"
+  ],
+  "specialties": [
+   "589c80259dbc6a1e",
+   "ca2d145189f5c73f"
+  ],
+  "coreSkills": [
+   "26ea14e264b0ae73",
+   "4f53cda18c2baa0c"
+  ]
+ }
+}

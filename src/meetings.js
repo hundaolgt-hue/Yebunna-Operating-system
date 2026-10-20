@@ -6,7 +6,8 @@
 import { getAgent, systemPrompt } from './agents.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, newId, now } from './store.js';
-import { bus, createMissionWithTasks } from './orchestrator.js';
+import { bus, createMissionWithTasks, sendToMission } from './orchestrator.js';
+import { duplicateTask } from './matching.js';
 import { logActivity } from './activity.js';
 import { demoMeetingTurn, demoMinutes } from './demo.js';
 import { addRule, removeRule, listRules } from './playbook.js';
@@ -56,8 +57,14 @@ export function addFounderMessage(mt, text) {
 }
 
 export function launchActionItems(mt) {
-  if (mt.missionId) return state.missions[mt.missionId];
   const specs = mt.actionItems.filter((a) => getAgent(a.agent) && a.agent !== 'ceo');
+  const launched = mt.missionId && state.missions[mt.missionId];
+  if (launched && launched.status !== 'cancelled') {
+    // Already launched: only items the mission doesn't have yet are added (as a follow-up).
+    const fresh = specs.filter((a) => !duplicateTask(launched, a, a.agent));
+    if (fresh.length) sendToMission(launched, { text: `New action items from the meeting “${mt.title}”:\n${fresh.map((a) => `- ${a.title} (${getAgent(a.agent).name})${a.brief ? `: ${a.brief}` : ''}`).join('\n')}`, mode: 'delegate' });
+    return launched;
+  }
   if (!specs.length) throw new Error('This meeting has no action items to launch.');
   const m = createMissionWithTasks({
     goal: `Action items from “${mt.title}”`,
@@ -212,14 +219,13 @@ Reply with ONLY JSON:
     ],
     effort: 'medium',
     agentId: 'ceo',
-    kind: 'meeting',
+    kind: 'minutes',
     demo: () => demoMinutes(mt),
   });
   const parsed = extractJson(raw);
   mt.minutes = String(parsed.summary || '');
   mt.decisions = (parsed.decisions || []).map(String);
   mt.actionItems = (parsed.action_items || []).filter((a) => getAgent(a.agent) && a.agent !== 'ceo');
-  mt.missionId = null;
   mt.status = 'done';
   mt.endedAt = now();
   emit(mt);
@@ -286,7 +292,7 @@ Reply with ONLY JSON:
     ],
     effort: 'medium',
     agentId: 'ceo',
-    kind: 'meeting',
+    kind: 'minutes',
     demo: () => JSON.stringify({ summary: '## Retrospective\n\nDemo mode: the team reviewed recent work.', decisions: [], rules_add: [{ type: 'do', text: 'Save every deliverable as a file and list it at the end.', why: 'demo' }], rules_remove: [] }),
   });
   const parsed = extractJson(raw);

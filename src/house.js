@@ -87,7 +87,8 @@ product's Ye-Buna checkout page. Never build your own payment form or collect ca
 - Get the exact Ye-Buna checkout URL for the product: from the task, your memory, or the founder. If you
   don't have it, end with "BLOCKED: … | NEED: the Ye-Buna checkout link for <product>". Never guess a link.
 - Collect the team's assets for the product: the vertical ad videos and ad images (Vega, Pixel), the
-  tutorial video, screenshots of the product, real numbers and copy (Echo). Follow the house creative
+  tutorial video, screenshots of the product, real numbers (Forge, Ledger) and Echo's ad hooks for message
+  match. You write the page copy yourself. Follow the house creative
   standards for anything visual.
 
 ## Page (Amharic first, mobile first)

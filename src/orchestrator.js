@@ -11,7 +11,7 @@
 // falls back to a written summary if the CEO can't produce one.
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAgent, systemPrompt, toolsFor, resolveAgent, specialists, skillCatalog, skillByName } from './agents.js';
+import { getAgent, systemPrompt, toolsFor, resolveAgent, specialists, skillCatalog, skillByName, agentSkills } from './agents.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, newId, now, slugify, WORKSPACE } from './store.js';
 import { bus } from './bus.js';
@@ -32,6 +32,7 @@ const CEO_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 const controllers = new Map(); // missionId -> AbortController
 const taskRuns = new Map(); // taskId -> AbortController of the run in progress
 const STALL_MS = Math.max(5, Number(process.env.STALL_MINUTES || 20)) * 60_000;
+let drive = Promise.resolve(); // Google Drive copies, one after another
 
 // ---- events -----------------------------------------------------------------
 
@@ -239,10 +240,10 @@ function taskBriefFields(s) {
  */
 export function sendToMission(m, { text, mode }) {
   addThread(m, { role: 'user', kind: 'text', text, mode });
-  if (m.status === 'planning') {
-    // The CEO is mid-plan: queue it and handle it as soon as the plan is done.
+  if (m.status === 'planning' || m.status === 'reporting') {
+    // The CEO is mid-plan or mid-report: queue it and handle it right after.
     (m.queue ||= []).push({ text, mode });
-    addThread(m, { role: 'ceo', kind: 'review', text: "Noted — I'll handle that as soon as I finish the current plan." });
+    addThread(m, { role: 'ceo', kind: 'review', text: `Noted — I'll handle that as soon as I finish the current ${m.status === 'planning' ? 'plan' : 'report'}.` });
     return;
   }
   handleMessage(m, { text, mode });
@@ -250,11 +251,13 @@ export function sendToMission(m, { text, mode }) {
 
 /** Run any follow-ups that arrived while the CEO was planning. */
 function drainQueue(m) {
+  if (m.status === 'cancelled') return void (m.queue = []);
   const next = m.queue?.shift();
   if (next) handleMessage(m, next);
 }
 
 function handleMessage(m, { text, mode }) {
+  if (m.status === 'cancelled') return;
   const before = m.status;
   const run = mode === 'ask' ? answer(m, text) : plan(m, text);
   run.catch((e) => {
@@ -314,6 +317,8 @@ export function cancelMission(m) {
     }
   }
   m.status = 'cancelled';
+  m.queue = [];
+  m.planningFor = undefined;
   addThread(m, { role: 'ceo', kind: 'escalation', text: 'Mission cancelled. All open tasks were stopped.' });
   setTimeout(dispatch, 0); // the next mission in line goes on
 }
@@ -339,22 +344,34 @@ export function resumeAll() {
     if (m.status === 'cancelled') continue;
     for (const t of missionTasks(m)) {
       if (t.status === 'blocked' && t.blocker) {
+        t.unblocking = false;
         t.unblocks = Math.max(0, (t.unblocks || 1) - 1); // the interrupted attempt doesn't count
         setTimeout(() => handleBlocker(m, t, t.blocker), 0);
       }
     }
+    m.planningNow = false;
+    const halfPlan = m.thread.some((it) => it.kind === 'plan' && !it.taskIds?.length);
     if (m.status === 'running' || m.status === 'reporting') {
       m.status = 'running';
       schedule(m);
-    } else if (m.status === 'planning' && missionTasks(m).length && !m.thread.some((it) => it.kind === 'plan' && !it.taskIds?.length)) {
-      // Interrupted while briefing assigned tasks: just start them.
+      drainQueue(m);
+    } else if (m.status === 'planning' && missionTasks(m).length) {
+      // Interrupted while briefing assigned tasks, or while planning a follow-up: the tasks carry
+      // on, and an interrupted follow-up is handled again (never a whole new plan).
+      m.thread = m.thread.filter((it) => !(it.kind === 'plan' && !it.taskIds?.length));
+      if (halfPlan && m.planningFor) (m.queue ||= []).unshift({ text: m.planningFor, mode: 'delegate' });
+      m.planningFor = undefined;
       m.status = 'running';
       schedule(m);
+      drainQueue(m);
     } else if (m.status === 'planning') {
       // Interrupted mid-plan: drop the half-written plan message and plan again.
       m.thread = m.thread.filter((it) => !(it.kind === 'plan' && !it.taskIds?.length));
       addThread(m, { role: 'ceo', kind: 'review', text: 'The app restarted while I was planning — planning again.' });
-      plan(m).catch((e) => fail(m, e));
+      plan(m).catch((e) => {
+        fail(m, e);
+        drainQueue(m);
+      });
     }
   }
 }
@@ -425,8 +442,19 @@ function inOrder(specs) {
 }
 
 async function plan(m, instruction) {
+  const before = m.status;
   m.status = 'planning';
+  m.planningFor = instruction || null; // kept so a restart can finish this exact instruction
+  m.planningNow = true;
   emitMission(m);
+  try {
+    return await planNow(m, instruction, before);
+  } finally {
+    m.planningNow = false;
+  }
+}
+
+async function planNow(m, instruction, before) {
   const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [] });
 
   const existing = missionTasks(m)
@@ -465,18 +493,29 @@ Reply with ONLY JSON:
 
   let parsed;
   let retry = '';
+  let tools = CEO_TOOLS; // read teammates' files and skills, look up skills on the web
   for (let attempt = 1; ; attempt++) {
-    const raw = await streamInto(m, item, {
-      system: systemPrompt(ceo()),
-      messages: [{ role: 'user', content: `${prompt}${retry}` }],
-      effort: 'high',
-      json: true,
-      kind: 'plan',
-      agentId: 'ceo',
-      tools: CEO_TOOLS, // read teammates' files and skills, look up skills on the web
-      maxTurns: 25,
-      demo: () => demoPlan(m.goal, hoursLeft(m), instruction),
-    });
+    let raw;
+    try {
+      raw = await streamInto(m, item, {
+        system: systemPrompt(ceo()),
+        messages: [{ role: 'user', content: `${prompt}${retry}` }],
+        effort: 'high',
+        json: true,
+        kind: 'plan',
+        agentId: 'ceo',
+        tools,
+        maxTurns: 25,
+        demo: () => demoPlan(m.goal, hoursLeft(m), instruction),
+      });
+    } catch (e) {
+      // Ran out of steps looking things up: answer from what is known, without tools.
+      if (e.code !== 'max_turns' || attempt >= 3) throw e;
+      tools = [];
+      retry = '\n\nYou already researched this and ran out of steps. Do not use any tools. Reply with the JSON now.';
+      item.text = '';
+      continue;
+    }
     try {
       parsed = extractJson(raw);
       parsed.tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
@@ -517,21 +556,23 @@ Reply with ONLY JSON:
   for (const e of parsed.edits) amendTask(e.t, String(e.change), { quiet: true });
   const dropped = parsed.tasks.length ? addTasks(m, item, parsed.tasks) : [];
   const edited = parsed.edits.map((e) => `✏️ Updated **${e.t.title}**: ${e.change}`);
+  m.planningFor = undefined;
   if (!parsed.tasks.length && !parsed.edits.length) {
-    // Nothing to change or add: say so and ask, instead of failing the mission.
+    // Nothing to change or add: say so and ask, instead of failing the mission. The mission
+    // goes back to exactly where it was (a finished mission is not reported again).
     item.kind = 'review';
     item.text = `${String(parsed.summary || '').trim()}\n\nI couldn't tell which task this changes. Which one should it go to (e.g. T2)?`.trim();
     notifyFounder(`❓ “${m.title}”: I couldn't tell which task your message changes. Which one (e.g. T2)?`, { type: 'mission', id: m.id });
-    m.status = 'running';
+    m.status = before === 'planning' ? 'running' : before;
     emitMission(m);
     schedule(m);
     return drainQueue(m);
   }
   item.text = [String(parsed.summary || 'Plan ready.'), ...edited].join('\n\n') + (dropped.length ? `\n\n_(Skipped ${dropped.length} item(s) I couldn't match to a teammate.)_` : '');
   if (!parsed.tasks.length) {
-    // Only edits: no new plan to approve, the work carries on.
+    // Only edits: no new plan to approve, the work carries on (an unapproved plan stays unapproved).
     item.kind = 'review';
-    m.status = 'running';
+    m.status = before === 'awaiting_approval' ? 'awaiting_approval' : 'running';
     emitMission(m);
     schedule(m);
     return drainQueue(m);
@@ -576,7 +617,8 @@ async function answer(m, question) {
 // ---- scheduling & execution -------------------------------------------------
 
 function schedule(m) {
-  if (m.status !== 'running' || limited()) return; // paused on the usage limit: resume() reschedules
+  if (limited()) return; // paused on the usage limit: resume() reschedules
+  if (m.status !== 'running') return dispatch(); // this mission waits, the next one in line may go
   const tasks = missionTasks(m);
 
   for (const t of tasks) {
@@ -641,7 +683,10 @@ function assignmentPrompt(m, t, agent) {
   const revision = t.feedback ? `\n\nCHANGE REQUESTED: ${t.feedback}\nYour earlier files are in ${workDir}/: update them; don't start over unless the change needs it.` : '';
   const named = (t.skills || []).map((name) => ({ name, s: skillByName(name) }));
   const skills = named.map(({ name, s }) => (s ? `- ${s.name} → ${s.path ? `Read ${s.path} and follow it` : 'written skill, below'}` : `- ${name} → not installed: find it with find-skills (\`npx skills find ${name}\`) and install it into .skills/, or work without it and say so`));
-  const writtenBodies = [skill, ...named.map((x) => x.s)].filter((s, i, all) => s && !s.path && all.indexOf(s) === i).map((s) => `### Skill: ${s.name}\n${s.body}`);
+  // Written skills: the ones the CEO named, plus the bot's own (taught, written or role skills; latest 3).
+  const coreNames = new Set((agent.coreSkills || []).map((n) => n.toLowerCase()));
+  const own = agentSkills(agent.id).filter((s) => !s.path && !s.house && !coreNames.has(s.name.toLowerCase())).slice(-3);
+  const writtenBodies = [skill, ...named.map((x) => x.s), ...own].filter((s, i, all) => s && !s.path && all.indexOf(s) === i).map((s) => `### Skill: ${s.name}\n${s.body}`);
   return `Task from ${ceo().name} (CEO): ${t.title}
 Product: ${m.goal}
 Brief: ${t.brief}
@@ -694,6 +739,7 @@ async function runTask(m, t) {
   signal(m).addEventListener('abort', stopWithMission, { once: true });
   taskRuns.set(t.id, ctl);
   t.lastActivityAt = now();
+  t.waitingSlot = true; // until a Claude process is free, waiting is not a stall
   t.stalled = false;
   const onEvent = (ev) => {
     t.lastActivityAt = now();
@@ -708,7 +754,7 @@ async function runTask(m, t) {
     t[field] += ev.text;
     emitDelta('task', t.id, m.id, field, ev.text);
   };
-  const run = (content, maxTurns) =>
+  const run = (content, maxTurns, size = t.size) =>
     complete(
       {
         system: systemPrompt(agent),
@@ -717,9 +763,13 @@ async function runTask(m, t) {
         tools: toolsFor(agent),
         agentId: agent.id,
         kind: 'task',
-        size: t.size,
+        size,
         maxTurns,
         signal: ctl.signal,
+        onStart: () => {
+          t.waitingSlot = false;
+          t.lastActivityAt = now();
+        },
         demo: () => demoOutput(t.agentId, t, m.goal),
       },
       onEvent,
@@ -731,11 +781,16 @@ async function runTask(m, t) {
       await run(prompt, agent.computer ? 150 : 100);
     } catch (e) {
       if (e.code !== 'max_turns') throw e;
-      // Out of steps: hand in what we have, or take one short "wrap it up" pass.
-      if ((e.partial || t.output).length < 400) {
+      // Out of steps: hand in the handover if it was already written, or take one short
+      // "wrap it up" pass (a fixed 25 steps, whatever the task size).
+      if (!/^RESULT:/m.test(e.partial || t.output)) {
         logActivity(agent.id, `ran long on “${t.title}” — wrapping up`, ref);
         t.output = '';
-        await run(`${prompt}\n\nIMPORTANT: you already worked on this and ran out of steps. Do NOT start over or explore further. Check the files you already saved in ${m.folder}/, fix only what is essential, and write the handover now.`, 25);
+        try {
+          await run(`${prompt}\n\nIMPORTANT: you already worked on this and ran out of steps. Do NOT start over or explore further. Check the files you already saved in ${t.workDir}/, fix only what is essential, and write the handover now.`, 25, 'large');
+        } catch (e2) {
+          if (e2.code !== 'max_turns' || !t.output.trim()) throw new Error(`ran out of steps twice without a handover; the files so far are in ${t.workDir}/`);
+        }
       }
     }
     if (!t.output.trim()) throw new Error('The bot finished without writing a deliverable.');
@@ -752,6 +807,7 @@ async function runTask(m, t) {
     t.review = review;
     if (t.amendPending) {
       // The founder changed this task while it was being reviewed: redo it with the change.
+      t.brief = `${t.brief}\n\nFOUNDER CHANGE: ${t.amendPending}`;
       t.feedback = t.amendPending;
       t.amendPending = null;
       t.status = 'queued';
@@ -773,6 +829,7 @@ async function runTask(m, t) {
     if (m.status === 'cancelled') return;
     if (t.amendPending) {
       // Stopped because the founder changed the task: start again with the change.
+      t.brief = `${t.brief}\n\nFOUNDER CHANGE: ${t.amendPending}`;
       t.feedback = t.amendPending;
       t.amendPending = null;
       t.status = 'queued';
@@ -824,6 +881,7 @@ async function handleBlocker(m, t, blocker) {
     return askFounder(m, t, `${agent?.name} is still blocked after ${MAX_UNBLOCKS} tries: ${blocker.reason}${blocker.need ? ` Needs: ${blocker.need}` : ''}`);
   }
   let d;
+  t.unblocking = true; // the CEO is working on it: don't start a second attempt meanwhile
   try {
     const raw = await complete({
       system: systemPrompt(ceo()),
@@ -865,6 +923,8 @@ Reply with ONLY JSON:
     if (m.status === 'cancelled') return;
     if (isLimitError(e)) return; // stays "blocked"; the CEO picks it up again when the limit resets
     return askFounder(m, t, `${agent?.name} is blocked: ${blocker.reason}${blocker.need ? ` Needs: ${blocker.need}` : ''}`);
+  } finally {
+    t.unblocking = false;
   }
   if (m.status === 'cancelled') return;
   const target = d.action === 'reassign' && resolveAgent(d.agent);
@@ -924,12 +984,19 @@ function finishTask(m, t) {
   t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
   fileDeliverable(m, t);
   logActivity(t.agentId, `delivered “${t.title}”${t.late ? ' (late)' : ''}`, { type: 'task', id: t.id, missionId: m.id });
-  try {
-    const where = publishTask(m, t, getAgent(t.agentId)?.name || 'bot');
-    if (where) logActivity(t.agentId, `saved “${t.title}” v${t.version} to Google Drive`, { type: 'task', id: t.id, missionId: m.id });
-  } catch (e) {
-    logActivity('ceo', `couldn't copy “${t.title}” to Google Drive: ${e.message}`, { type: 'task', id: t.id, missionId: m.id });
-  }
+  // Copied to Drive in the background (big files must not freeze the app); one copy at a time.
+  drive = drive
+    .then(() => publishTask(m, t, getAgent(t.agentId)?.name || 'bot'))
+    .then((where) => {
+      if (where) {
+        logActivity(t.agentId, `saved “${t.title}” v${t.version} to Google Drive`, { type: 'task', id: t.id, missionId: m.id });
+        emitTask(t);
+      }
+    })
+    .catch((e) => {
+      logActivity('ceo', `couldn't copy “${t.title}” to Google Drive: ${e.message}`, { type: 'task', id: t.id, missionId: m.id });
+      notifyFounder(`⚠️ Couldn't copy “${t.title}” to Google Drive: ${e.message}. It is saved on the PC; the next version will try again.`, { type: 'task', id: t.id });
+    });
   bus.emit('trigger', { event: 'task_completed', task: t });
 }
 
@@ -948,12 +1015,15 @@ export function amendTask(t, change, { quiet = false } = {}) {
   if (t.status === 'queued') {
     t.brief = `${t.brief}\n\nFOUNDER CHANGE: ${change}`;
   } else if (BUSY.includes(t.status)) {
-    t.amendPending = change;
+    // Several changes while it runs are all kept; the run restarts with them.
+    t.amendPending = [t.amendPending, change].filter(Boolean).join('\n');
     if (t.status === 'in_progress') taskRuns.get(t.id)?.abort();
   } else if (t.status === 'blocked') {
-    t.feedback = `${t.feedback || ''}\nFounder change: ${change}`.trim();
+    // In the brief, so the CEO's unblock instructions (which replace the feedback) can't drop it.
+    t.brief = `${t.brief}\n\nFOUNDER CHANGE: ${change}`;
   } else {
     // done, approval or failed: redo it with the change (doesn't count as a CEO revision).
+    t.brief = `${t.brief}\n\nFOUNDER CHANGE: ${change}`;
     t.feedback = change;
     t.error = null;
     t.status = 'queued';
@@ -967,7 +1037,7 @@ export function amendTask(t, change, { quiet = false } = {}) {
 }
 
 /** The CEO checks a deliverable. If the review itself fails, the work still counts. */
-async function ceoReview(m, t) {
+async function ceoReview(m, t, retried = false) {
   const agent = getAgent(t.agentId);
   try {
     const raw = await complete({
@@ -982,14 +1052,14 @@ ${t.acceptance?.length ? `Acceptance criteria:\n${t.acceptance.map((x) => `- ${x
 Handover:
 ${clip(t.output, 3000)}
 
-Spot-check the main file it lists (Read; a quick look, not a full re-read). Approve only if it meets every
+${retried ? 'Decide from the handover alone; do not use tools.' : 'Spot-check the main file it lists (Read; a quick look, not a full re-read). Do not open skill files.'} Approve only if it meets every
 criterion and is specific and premium. Otherwise ask for a revision.
 Reply with ONLY JSON: {"verdict": "approve" | "revise", "feedback": "<one sentence, exact fix>"}`,
         },
       ],
       effort: 'low',
-      tools: ['Read', 'Glob', 'Grep'],
-      maxTurns: 8,
+      tools: retried ? [] : ['Read', 'Glob', 'Grep'],
+      maxTurns: retried ? 2 : 10,
       agentId: 'ceo',
       kind: 'review',
       signal: signal(m),
@@ -999,6 +1069,7 @@ Reply with ONLY JSON: {"verdict": "approve" | "revise", "feedback": "<one senten
     return { verdict: r.verdict === 'revise' ? 'revise' : 'approve', feedback: String(r.feedback || '') };
   } catch (e) {
     if (e.message === 'aborted' || isLimitError(e)) throw e;
+    if (e.code === 'max_turns' && !retried) return ceoReview(m, t, true); // decide from the handover alone
     return { verdict: 'approve', feedback: `Accepted without a full review (${e.message}).` };
   }
 }
@@ -1044,16 +1115,26 @@ Don't retell each task.`;
   }
   fs.writeFileSync(path.join(WORKSPACE, m.folder, '00-mission-report.md'), `# Mission report: ${m.goal}\n\n${item.text}\n`);
   try {
-    const where = publishReport(m, item.text);
+    const where = await (drive = drive.then(() => publishReport(m, item.text)));
     if (where) item.text += `\n\n📁 Google Drive: ${where}/ (report v${m.reportVersion})`;
   } catch (e) {
+    drive = Promise.resolve();
     item.text += `\n\n⚠️ Couldn't copy to Google Drive: ${e.message}`;
+  }
+  if (m.status !== 'reporting') return; // cancelled while the report was being written
+  if (!missionTasks(m).every((t) => ['done', 'failed'].includes(t.status))) {
+    // The founder changed a task while the report was being written: that work goes first.
+    m.status = 'running';
+    emitMission(m);
+    schedule(m);
+    return drainQueue(m);
   }
   m.status = 'done';
   m.completedAt = now();
   emitMission(m);
   logActivity('ceo', `finished “${m.title}” and filed the report`, { type: 'mission', id: m.id });
-  if (m.source === 'founder') notifyFounder(`✅ Mission complete — “${m.title}”. ${tasks.filter((t) => t.status === 'done').length}/${tasks.length} tasks delivered. The report is in Yebunna OS — reply here with comments or next steps.`, { type: 'mission', id: m.id });
+  drainQueue(m); // messages that arrived while the report was being written
+  if (m.source === 'founder' || m.source === 'chat') notifyFounder(`✅ Mission complete — “${m.title}”. ${tasks.filter((t) => t.status === 'done').length}/${tasks.length} tasks delivered. The report is in Yebunna OS — reply here with comments or next steps.`, { type: 'mission', id: m.id });
   bus.emit('trigger', { event: 'mission_completed', mission: m });
 }
 
@@ -1092,18 +1173,22 @@ bus.on('limit.hit', (limit) => {
 bus.on('limit.reset', () => {
   for (const m of Object.values(state.missions)) {
     if (['cancelled', 'done', 'failed'].includes(m.status) && !m.waitingLimit) continue;
+    if (m.planningNow) continue; // a plan is still running (e.g. /resume while not paused): it finishes on its own
     const wasWaiting = m.waitingLimit || missionTasks(m).some((t) => t.status === 'queued' || t.status === 'blocked');
     m.waitingLimit = false;
     if (!wasWaiting && m.status !== 'running') continue;
     if (m.status === 'planning' && !missionTasks(m).length) {
       addThread(m, { role: 'ceo', kind: 'review', text: '▶️ The usage limit has reset — planning now.' });
-      plan(m).catch((e) => fail(m, e));
+      plan(m).catch((e) => {
+        fail(m, e);
+        drainQueue(m);
+      });
       continue;
     }
     if (m.status === 'planning') m.status = 'running';
     if (wasWaiting) addThread(m, { role: 'ceo', kind: 'review', text: '▶️ The usage limit has reset — the team is back at work.' });
     for (const t of missionTasks(m)) {
-      if (t.status === 'blocked' && t.blocker) {
+      if (t.status === 'blocked' && t.blocker && !t.unblocking) {
         t.unblocks = Math.max(0, (t.unblocks || 1) - 1);
         handleBlocker(m, t, t.blocker);
       }
@@ -1119,7 +1204,7 @@ setInterval(() => {
   const t0 = Date.now();
   for (const [taskId, ctl] of taskRuns) {
     const t = state.tasks[taskId];
-    if (!t || t.status !== 'in_progress' || !t.lastActivityAt) continue;
+    if (!t || t.status !== 'in_progress' || !t.lastActivityAt || t.waitingSlot) continue;
     if (t0 - Date.parse(t.lastActivityAt) < STALL_MS) continue;
     // No output, thinking or tool use for too long: stop the run; the CEO works out why.
     t.stalled = true;

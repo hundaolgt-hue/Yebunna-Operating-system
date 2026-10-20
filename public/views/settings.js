@@ -95,7 +95,7 @@ const pickSel = (id, field, value, options) =>
   `<select class="select-sm" data-run="${esc(id)}" data-field="${field}">${options.map((o) => `<option ${o === value ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
 
 const n = (x) => (x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x || 0));
-const KIND = { task: 'Tasks', chat: 'Chats', plan: 'CEO planning', review: 'CEO reviews', report: 'Reports', meeting: 'Meetings', memory: 'Memory notes', skill: 'Skills', other: 'Other' };
+const KIND = { task: 'Tasks', chat: 'Chats', plan: 'CEO planning', review: 'CEO reviews', report: 'Reports', meeting: 'Meetings', minutes: 'Minutes & retros', memory: 'Memory notes', skill: 'Skills', other: 'Other' };
 
 function usageTable() {
   const days = S.usage?.days || {};

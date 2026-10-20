@@ -334,7 +334,7 @@ export async function renderAgent(agentId) {
 }
 
 function chatMsg(a, msg) {
-  if (msg.role === 'user') return `<div class="msg-user">${msg.via ? `<span class="tag">${msg.via === 'voice' ? '🎙 Telegram voice note' : '📱 Telegram'}</span>` : ''}${esc(msg.content)}</div>`;
+  if (msg.role === 'user') return `<div class="msg-user">${msg.via && msg.via !== 'app' ? `<span class="tag">${msg.via === 'voice' ? '🎙 Telegram voice note' : '📱 Telegram'}</span>` : ''}${esc(msg.content)}</div>`;
   return `<div class="msg-ai">${avatar(a.id)}<div class="body">
     <div class="msg-head"><b>${esc(a.name)}</b> ${esc(a.role)} ${!msg.streaming && msg.content ? speakBtn() : ''}</div>
     ${thinking({ reasoning: msg.reasoning, streaming: msg.streaming, text: msg.content }, 'chat')}
