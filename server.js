@@ -22,7 +22,13 @@ import {
   answerTask,
 } from './src/orchestrator.js';
 import { addRule, removeRule, listRules } from './src/playbook.js';
-import { resume as resumeAfterLimit } from './src/limits.js';
+import { resume as resumeAfterLimit, leaveApi, apiSpentToday } from './src/limits.js';
+
+/** The API fallback settings for the browser: never the key itself. */
+function publicFallback() {
+  const f = state.apiFallback || {};
+  return { enabled: !!f.enabled, key: f.key ? `••••••${f.key.slice(-4)}` : '', dailyCapUsd: f.dailyCapUsd || 10, noOpus: f.noOpus !== false, spentToday: apiSpentToday() };
+}
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
 import { ceoChat } from './src/ceochat.js';
@@ -153,6 +159,8 @@ const routes = {
       usage: state.usage || null,
       rules: listRules(),
       limit: state.limit,
+      apiMode: state.apiMode,
+      apiFallback: publicFallback(),
       disk: state.disk,
     }),
 
@@ -477,6 +485,43 @@ const routes = {
   'GET /api/health': async (req, res) => {
     const tg = await import('./src/telegram.js');
     send(res, 200, { runs: runStats(), limit: state.limit, disk: state.disk, telegram: { polling: tg.isPolling(), ...tg.health } });
+  },
+
+  // ---- API fallback: keep working on the API key while the plan's limit is hit ----
+  'PUT /api/api-fallback': async (req, res) => {
+    const body = await readBody(req);
+    const f = (state.apiFallback ||= { enabled: false, key: '', dailyCapUsd: 10, noOpus: true });
+    if (typeof body.key === 'string' && body.key.trim() && !body.key.startsWith('••')) {
+      const key = body.key.trim().replace(/^["']+|["']+$/g, '');
+      need(/^sk-ant-[\w-]{20,}$/.test(key), 400, 'That doesn\'t look like an Anthropic API key. It starts with "sk-ant-" (console.anthropic.com → API keys).');
+      f.key = key;
+    }
+    if (body.dailyCapUsd !== undefined) {
+      const cap = Number(body.dailyCapUsd);
+      need(cap > 0 && cap <= 1000, 400, 'Set a daily cap between $1 and $1000.');
+      f.dailyCapUsd = cap;
+    }
+    if (body.noOpus !== undefined) f.noOpus = Boolean(body.noOpus);
+    if (body.enabled !== undefined) {
+      need(!body.enabled || f.key, 400, 'Paste your API key first.');
+      f.enabled = Boolean(body.enabled);
+      if (!f.enabled) leaveApi('turned off');
+    }
+    save();
+    bus.emit('event', { type: 'apiFallback', apiFallback: publicFallback(), apiMode: state.apiMode });
+    send(res, 200, publicFallback());
+  },
+  'POST /api/api-fallback/test': async (req, res) => {
+    const key = state.apiFallback?.key;
+    need(key, 400, 'Paste your API key first.');
+    const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(15000) }).catch((e) => ({ ok: false, statusText: e.message }));
+    if (r.ok) return send(res, 200, { ok: true, message: 'The key works.' });
+    const body = r.json ? await r.json().catch(() => ({})) : {};
+    send(res, 200, { ok: false, message: body?.error?.message || r.statusText || 'The key was refused.' });
+  },
+  'POST /api/api-fallback/off': (req, res) => {
+    leaveApi('founder switched back');
+    send(res, 200, { ok: true });
   },
 
   // ---- usage limit ----

@@ -196,7 +196,13 @@ function onEvent(e) {
     S.rules = e.rules;
   } else if (e.type === 'limit') {
     S.limit = e.limit;
+    if ('apiMode' in e) S.apiMode = e.apiMode;
     renderLimit();
+  } else if (e.type === 'apiFallback') {
+    S.apiFallback = e.apiFallback;
+    S.apiMode = e.apiMode;
+    renderLimit();
+    if (S.route === 'settings') renderSettings();
   } else if (e.type === 'disk') {
     S.disk = e.disk;
     renderLimit();
@@ -239,6 +245,8 @@ async function loadState() {
   S.usage = st.usage || null;
   S.rules = st.rules || [];
   S.limit = st.limit || null;
+  S.apiMode = st.apiMode || null;
+  S.apiFallback = st.apiFallback || null;
   S.disk = st.disk || null;
   renderLimit();
   refresh('state');
@@ -248,6 +256,12 @@ async function loadState() {
 function renderLimit() {
   const el = $('#limit-banner');
   const gb = S.disk ? (S.disk.free / 1024 ** 3).toFixed(1) : '?';
+  if (!S.limit && S.apiMode) {
+    el.hidden = false;
+    el.innerHTML = `<span>💳 <b>Running on your API key</b> — the plan's usage limit was hit. Back on the subscription ${S.apiMode.known ? `when it resets (${esc(new Date(S.apiMode.backAt).toLocaleString())})` : `at ${esc(new Date(S.apiMode.backAt).toLocaleString())}`}. Spent today: $${(S.apiFallback?.spentToday || 0).toFixed(2)} of $${S.apiFallback?.dailyCapUsd || 10}.</span><span class="spacer"></span><button class="btn-ghost" data-api-off>Back to the plan now</button>`;
+    $('[data-api-off]', el).addEventListener('click', () => api('/api/api-fallback/off', { method: 'POST' }).then(() => toast('Back on the subscription.')).catch((err) => toast(err.message)));
+    return;
+  }
   if (!S.limit && S.disk?.saveError && S.disk.status === 'ok') {
     el.hidden = false;
     el.innerHTML = `<span>⚠️ <b>Not saving.</b> ${esc(S.disk.saveError)}</span>`;

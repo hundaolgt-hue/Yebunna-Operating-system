@@ -33,6 +33,9 @@ export const state = {
   telegram: { sent: [], offset: 0 }, // alerts sent (for matching replies) and the polling offset
   lastRetroAt: null,
   ceoPending: [], // CEO chat messages kept while paused on the usage limit
+  apiFallback: null, // { enabled, key (stays on this PC), dailyCapUsd, noOpus } — Settings → Usage
+  apiMode: null, // { since, backAt, known } while runs are billed to the API key
+  apiSpend: null, // { day, usd } API money spent today
   disk: null, // free space on the workspace drive
   settings: {
     approvePlans: false,

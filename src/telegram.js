@@ -379,12 +379,15 @@ async function poll(gen) {
 let resumedAt = 0;
 let resumeNote = null;
 bus.on('disk.alert', (text) => notifyFounder(text));
+bus.on('api.on', (m) => notifyFounder(`💳 Your Claude plan's usage limit was reached, so the team switched to your API key. Back on the subscription ${m.known ? 'when it resets' : 'at'} ${new Date(m.backAt).toLocaleString()}. Daily cap: $${state.apiFallback?.dailyCapUsd || 10}.`));
+bus.on('api.off', ({ reason }) => notifyFounder(reason === 'plan reset' ? '🔁 Back on your Claude subscription (the plan has reset). If it is still limited, the team switches to the API key again.' : `🔁 Stopped using the API key (${reason}).`));
 bus.on('limit.hit', (limit) => {
   if (limit.kind === 'disk') return; // disk.alert already said it
   if (Date.now() - resumedAt < 5 * 60_000) return void clearTimeout(resumeNote);
   notifyFounder(`⏸ Your Claude usage limit was reached. All work is paused and resumes automatically ${limit.known ? `when it resets (${new Date(limit.resetAt).toLocaleString()})` : `at ${new Date(limit.resetAt).toLocaleString()} — I'll keep checking every couple of hours`}.\n/resume tries again sooner.`);
 });
-bus.on('limit.reset', () => {
+bus.on('limit.reset', ({ reason } = {}) => {
+  if (reason === 'switched to the API key') return; // api.on already said it
   resumedAt = Date.now();
   clearTimeout(resumeNote);
   resumeNote = setTimeout(() => !state.limit && notifyFounder('▶️ The usage limit has reset — the team is back at work.'), 5 * 60_000);

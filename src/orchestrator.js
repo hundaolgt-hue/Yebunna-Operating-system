@@ -1170,7 +1170,8 @@ bus.on('limit.hit', (limit) => {
   }
 });
 
-bus.on('limit.reset', () => {
+bus.on('limit.reset', ({ reason } = {}) => {
+  const back = reason === 'switched to the API key' ? '▶️ Switched to your API key — the team is back at work.' : '▶️ The usage limit has reset — the team is back at work.';
   for (const m of Object.values(state.missions)) {
     if (['cancelled', 'done', 'failed'].includes(m.status) && !m.waitingLimit) continue;
     if (m.planningNow) continue; // a plan is still running (e.g. /resume while not paused): it finishes on its own
@@ -1186,7 +1187,7 @@ bus.on('limit.reset', () => {
       continue;
     }
     if (m.status === 'planning') m.status = 'running';
-    if (wasWaiting) addThread(m, { role: 'ceo', kind: 'review', text: '▶️ The usage limit has reset — the team is back at work.' });
+    if (wasWaiting) addThread(m, { role: 'ceo', kind: 'review', text: back });
     for (const t of missionTasks(m)) {
       if (t.status === 'blocked' && t.blocker && !t.unblocking) {
         t.unblocks = Math.max(0, (t.unblocks || 1) - 1);

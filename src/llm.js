@@ -11,7 +11,7 @@ import { WORKSPACE, state } from './store.js';
 import { connectionMcpServers, connectionRuntime } from './connections.js';
 import { recordUsage } from './usage.js';
 import { runSettings } from './agents.js';
-import { UsageLimitError, limited, hitLimit, parseReset } from './limits.js';
+import { UsageLimitError, limited, hitLimit, parseReset, onApi, recordApiCost, apiFailed } from './limits.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -72,7 +72,9 @@ export function detectionReport() {
 }
 
 
-// Strip API credentials so the CLI uses the subscription login, not API billing.
+// Strip API credentials so the CLI uses the subscription login, not API billing. The only
+// exception is the API fallback (Settings → Usage): while the plan's limit is hit, runs get the
+// founder's API key, and go back to the subscription when it resets.
 const childEnv = { ...process.env, MCP_TIMEOUT: process.env.MCP_TIMEOUT || '90000' };
 delete childEnv.ANTHROPIC_API_KEY;
 delete childEnv.ANTHROPIC_AUTH_TOKEN;
@@ -216,6 +218,8 @@ export function pick(kind, model, effort, maxTurns, size = 'medium', agentId) {
 
 export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo, onStart }) {
   ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size, agentId));
+  const api = onApi(); // this run is billed to the API key
+  if (api && state.apiFallback?.noOpus && /opus/i.test(model || '')) model = 'sonnet'; // keep API costs down
   if (demoMode) {
     onStart?.();
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
@@ -260,7 +264,8 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     // Connected accounts: tokens go in this run's environment only; synced folders are added.
     const conn = agentId ? connectionRuntime(agentId) : { env: {}, addDirs: [] };
     for (const dir of conn.addDirs) args.push('--add-dir', dir);
-    child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: { ...childEnv, ...conn.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const billing = api && state.apiFallback?.key ? { ANTHROPIC_API_KEY: state.apiFallback.key } : {};
+    child = spawn(BIN, [...BIN_ARGS, ...args], { cwd: WORKSPACE, env: { ...childEnv, ...conn.env, ...billing }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   } catch (e) {
     browser?.release();
     fs.rm(promptFile, { force: true }, () => {});
@@ -328,7 +333,8 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
 
   const code = await exited;
-  if (result) recordUsage({ agentId, kind, model: mainModel(result.modelUsage) || model || MODEL || 'default', usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns });
+  if (result) recordUsage({ agentId, kind, model: mainModel(result.modelUsage) || model || MODEL || 'default', usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns, billing: api ? 'api' : 'plan' });
+  if (result && api) recordApiCost(result.total_cost_usd);
   if (signal?.aborted) throw new Error('aborted');
   if (timedOut) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`);
   if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);
@@ -338,6 +344,11 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
   if (result?.is_error || (code !== 0 && !result)) {
     const why = String(result?.result || stderr.trim() || `claude exited with code ${code}`);
+    if (api && /credit balance|invalid x-api-key|invalid api key|authentication_error|permission_error|billing/i.test(why)) {
+      // The API key can't be used: pause like a normal usage limit, and say why.
+      apiFailed(why.slice(0, 200));
+      throw new UsageLimitError(`The API key can't be used (${why.slice(0, 120)}) — work is paused until your plan resets.`, state.limit?.resetAt);
+    }
     if (/not logged in|please run \/login|invalid api key|authentication_error|oauth token|\/login/i.test(why)) {
       throw new Error('Claude Code is not logged in. In cmd run `claude`, type /login, choose your Claude account (Pro/Max subscription), finish in the browser, type /exit, then try again.');
     }

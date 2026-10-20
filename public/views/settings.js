@@ -3,6 +3,7 @@ import { S, $$, api, esc, view, toast, Recognition } from '../core.js';
 export function renderSettings() {
   const p = S.provider || {};
   const st = S.settings;
+  const fb = S.apiFallback || {};
   view().innerHTML = `<div class="page narrow">
     <div class="page-head"><h2>Settings</h2></div>
     <section class="settings">
@@ -33,6 +34,19 @@ export function renderSettings() {
         .join('')}</table>
       <p class="faint small">Memory notes use Haiku. Meetings use each bot's model at low effort.</p>
       ${usageTable()}
+    </section>
+    <section class="settings">
+      <h3>API fallback</h3>
+      <p class="side-text">When your Claude plan's usage limit is hit, the team can keep working on your Anthropic API key instead of pausing, and switch back to the subscription by itself when the plan resets. API use is billed per token by Anthropic, so set a daily cap: past it, the team pauses as usual.</p>
+      ${S.apiMode ? `<div class="kv"><span>Right now</span><b>💳 On the API key until ${esc(new Date(S.apiMode.backAt).toLocaleString())}</b></div>` : ''}
+      <label class="setting"><span><b>Use my API key when the plan's limit is hit</b><small>Then back to the subscription when it resets.</small></span>
+        <label class="switch"><input type="checkbox" data-api="enabled" ${fb.enabled ? 'checked' : ''}/><span></span></label></label>
+      <label class="setting"><span><b>Anthropic API key</b><small>console.anthropic.com → API keys (starts with sk-ant-). Stays on this PC; only bot runs get it, and only while on the fallback.</small></span>
+        <span class="row-btns"><input class="select-sm" type="password" data-api-key placeholder="${esc(fb.key || 'sk-ant-…')}" style="width:16em" /><button class="btn-ghost" data-api-test>Save & test</button></span></label>
+      <label class="setting"><span><b>Daily cap (USD)</b><small>Spent today on the API: $${(fb.spentToday || 0).toFixed(2)}</small></span>
+        <input class="select-sm" type="number" min="1" max="1000" step="1" data-api-cap value="${fb.dailyCapUsd || 10}" style="width:6em" /></label>
+      <label class="setting"><span><b>Use Sonnet instead of Opus on the API</b><small>Opus costs more per token. Bots set to Opus run on Sonnet while on the API.</small></span>
+        <label class="switch"><input type="checkbox" data-api="noOpus" ${fb.noOpus !== false ? 'checked' : ''}/><span></span></label></label>
     </section>
     <section class="settings">
       <h3>Storage</h3>
@@ -66,6 +80,25 @@ export function renderSettings() {
       .catch((e) => toast(e.message));
   $$('[data-set-inv]').forEach((el) => el.addEventListener('change', () => put({ [el.dataset.setInv]: !el.checked })));
   $$('[data-browser]').forEach((el) => el.addEventListener('change', () => put({ browser: el.value })));
+  const putApi = (body) =>
+    api('/api/api-fallback', { method: 'PUT', body })
+      .then((f) => ((S.apiFallback = f), toast('Saved.')))
+      .catch((e) => (toast(e.message), renderSettings()));
+  $$('[data-api]').forEach((el) => el.addEventListener('change', () => putApi({ [el.dataset.api]: el.checked })));
+  $$('[data-api-cap]').forEach((el) => el.addEventListener('change', () => putApi({ dailyCapUsd: Number(el.value) })));
+  $$('[data-api-test]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const key = document.querySelector('[data-api-key]').value.trim();
+      try {
+        if (key) S.apiFallback = await api('/api/api-fallback', { method: 'PUT', body: { key } });
+        const r = await api('/api/api-fallback/test', { method: 'POST' });
+        toast(r.ok ? '✅ The key works.' : `⚠️ ${r.message}`);
+        renderSettings();
+      } catch (e) {
+        toast(e.message);
+      }
+    }),
+  );
   $$('[data-run]').forEach((el) =>
     el.addEventListener('change', () =>
       api(`/api/agents/${el.dataset.run}`, { method: 'PUT', body: { [el.dataset.field]: el.value } })
@@ -116,6 +149,7 @@ function usageTable() {
       <table class="usage-table">${head}${rows(today.byBot, (id) => S.agentById[id]?.name || id)}</table>
       <table class="usage-table">${head}${rows(today.byKind, (k) => KIND[k] || k)}</table>
       ${today.byModel ? `<table class="usage-table">${head}${rows(today.byModel, (k) => k)}</table>` : ''}
+      ${today.byBilling ? `<table class="usage-table">${head}${rows(today.byBilling, (k) => (k === 'api' ? 'Billed to the API key' : 'Your Claude plan'))}</table>` : ''}
       <p class="faint small">“≈ API $” is what the same work would cost on the pay-per-use API — not a charge on your plan, just a relative measure of how much limit each part uses.</p></details>` : ''}`;
 }
 

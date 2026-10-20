@@ -2,6 +2,10 @@
 // nothing new is started (so no runs are wasted bumping into the limit), interrupted
 // work goes back in the queue, and ONE timer wakes everything up when the limit resets.
 // If Claude Code didn't say when that is, we try again every CHECK_HOURS.
+//
+// API fallback (optional, Settings → Usage): instead of pausing, the team switches to the
+// founder's Anthropic API key until the plan resets, then back to the subscription. A daily
+// spending cap stops it; past the cap the team pauses as usual.
 import { state, save, now } from './store.js';
 import { bus } from './bus.js';
 
@@ -68,8 +72,72 @@ function nextClockTime(hour, minute, timeZone, from) {
   return new Date(t).toISOString();
 }
 
-/** A run hit the limit: pause everything until it resets. */
-export function hitLimit(message, resetAt, kind = 'usage') {
+// ---- API fallback -------------------------------------------------------------------
+
+const fallback = () => state.apiFallback || {};
+const today = () => new Date().toISOString().slice(0, 10);
+/** API money spent today (USD, as Claude Code reports it). */
+export const apiSpentToday = () => (state.apiSpend?.day === today() ? state.apiSpend.usd : 0);
+const canUseApi = () => Boolean(fallback().enabled && fallback().key && apiSpentToday() < Number(fallback().dailyCapUsd || 10));
+/** Are runs billed to the API key right now? */
+export const onApi = () => Boolean(state.apiMode);
+let apiTimer = null;
+
+/** The plan's limit was hit: carry on with the API key until the plan resets. */
+function enterApi(resetAt, message) {
+  const back = resetAt && Date.parse(resetAt) > Date.now() ? resetAt : new Date(Date.now() + CHECK_HOURS * 36e5).toISOString();
+  state.apiMode = { since: now(), backAt: back, known: Boolean(resetAt), message: String(message).slice(0, 300) };
+  save();
+  armApi();
+  bus.emit('event', { type: 'limit', limit: null, apiMode: state.apiMode });
+  bus.emit('api.on', state.apiMode);
+  // The run that hit the limit went back in the queue: start the team again, now on the API.
+  setTimeout(() => bus.emit('limit.reset', { reason: 'switched to the API key' }), 1500);
+}
+
+/** Back to the subscription (the plan has reset, or the API can't be used any more). */
+export function leaveApi(reason = 'plan reset') {
+  if (!state.apiMode) return;
+  state.apiMode = null;
+  clearTimeout(apiTimer);
+  save();
+  bus.emit('event', { type: 'limit', limit: state.limit, apiMode: null });
+  bus.emit('api.off', { reason });
+}
+
+function armApi() {
+  clearTimeout(apiTimer);
+  if (!state.apiMode) return;
+  const ms = Math.max(5_000, Date.parse(state.apiMode.backAt) + (state.apiMode.known ? GRACE_MS : 0) - Date.now());
+  // At the reset the next run tries the subscription again; if it is still limited, it switches back.
+  apiTimer = setTimeout(() => leaveApi('plan reset'), Math.min(ms, 2 ** 31 - 1));
+  apiTimer.unref?.();
+}
+
+/** Count what an API-billed run cost; past the daily cap, stop using the API. */
+export function recordApiCost(usd) {
+  const day = today();
+  state.apiSpend = state.apiSpend?.day === day ? state.apiSpend : { day, usd: 0 };
+  state.apiSpend.usd += Number(usd) || 0;
+  save();
+  if (state.apiMode && !canUseApi()) {
+    const backAt = state.apiMode.backAt;
+    leaveApi('daily API cap reached');
+    hitLimit(`Daily API cap of $${fallback().dailyCapUsd || 10} reached`, backAt, 'usage', { noApi: true });
+  }
+}
+
+/** The API key can't be used (no credit, revoked): pause like a normal limit. */
+export function apiFailed(message) {
+  const backAt = state.apiMode?.backAt;
+  leaveApi('API key failed');
+  hitLimit(`API key: ${message}`, backAt, 'usage', { noApi: true });
+}
+
+/** A run hit the limit: switch to the API key if allowed, otherwise pause everything until it resets. */
+export function hitLimit(message, resetAt, kind = 'usage', { noApi = false } = {}) {
+  if (kind === 'usage' && !noApi && !state.apiMode && canUseApi()) return enterApi(resetAt, message);
+  if (state.apiMode && kind === 'usage' && !noApi) return; // already on the API: this was a stray subscription run
   const wake = resetAt && Date.parse(resetAt) > Date.now() ? resetAt : new Date(Date.now() + CHECK_HOURS * 36e5).toISOString();
   const already = state.limit;
   state.limit = { since: already?.since || now(), resetAt: wake, known: Boolean(resetAt), message: String(message).slice(0, 300), kind };
@@ -100,4 +168,7 @@ export function resume(reason = 'limit reset') {
 }
 
 // After a restart, keep waiting (or resume straight away if the reset already passed).
-setTimeout(() => state.limit && arm(), 0);
+setTimeout(() => {
+  if (state.limit) arm();
+  if (state.apiMode) armApi();
+}, 0);

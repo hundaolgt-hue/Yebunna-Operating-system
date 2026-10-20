@@ -7,7 +7,7 @@ import { bus } from './bus.js';
 const KEEP_DAYS = 14;
 let pending = null;
 
-export function recordUsage({ agentId = 'system', kind = 'other', model = 'default', usage = {}, cost = 0, turns = 0 }) {
+export function recordUsage({ agentId = 'system', kind = 'other', model = 'default', usage = {}, cost = 0, turns = 0, billing = 'plan' }) {
   const day = new Date().toISOString().slice(0, 10);
   const days = ((state.usage ||= {}).days ||= {});
   const d = (days[day] ||= { runs: 0, input: 0, output: 0, cached: 0, cost: 0, turns: 0, byBot: {}, byKind: {}, byModel: {} });
@@ -26,6 +26,7 @@ export function recordUsage({ agentId = 'system', kind = 'other', model = 'defau
   add((d.byBot[agentId] ||= {}));
   add((d.byKind[kind] ||= {}));
   add(((d.byModel ||= {})[model] ||= {}));
+  add(((d.byBilling ||= {})[billing] ||= {}));
   for (const k of Object.keys(days).sort().slice(0, -KEEP_DAYS)) delete days[k];
   save();
   // Batch UI updates: at most one every 2 seconds.
