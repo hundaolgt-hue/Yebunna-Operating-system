@@ -142,6 +142,8 @@ export function runSettings(agentId, kind) {
   if (!a) return { model: 'sonnet', effort: 'medium' };
   if (kind === 'plan' && a.planModel) return { model: a.planModel, effort: a.planEffort || a.effort || 'high' };
   const model = a.model || 'sonnet';
+  // Sorting the founder's messages (edit vs add vs new product) needs real thought.
+  if (agentId === 'ceo' && kind === 'chat' && ['low', 'medium'].includes(a.effort || 'low')) return { model, effort: 'medium' };
   return { model, effort: ['meeting', 'retro', 'standup'].includes(kind) ? 'low' : a.effort || 'medium' };
 }
 

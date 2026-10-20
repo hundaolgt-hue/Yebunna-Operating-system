@@ -70,3 +70,13 @@ test('telling the CEO to change finished work redoes that task; it does not star
   assert.match(fresh, /New mission/);
   assert.equal(Object.keys(state.missions).length, before + 1);
 });
+
+test('the CEO never starts a second mission for a product that already has one', async () => {
+  const m = Object.values(state.missions).find((x) => x.goal === 'Product C');
+  m.product = 'SiteCalc Villa';
+  const before = Object.keys(state.missions).length;
+  const reply = await ceoChat('SiteCalc Villa also needs a short FAQ for buyers', { via: 'app' });
+  assert.equal(Object.keys(state.missions).length, before, 'no new mission');
+  assert.match(reply, /Added to “Product C”/);
+  await until(() => m.status === 'done', 'the added work');
+});

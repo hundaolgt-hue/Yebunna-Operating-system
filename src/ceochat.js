@@ -1,40 +1,39 @@
 // Talking to the CEO (Telegram and the CEO chat in the app, one conversation): the founder
 // chats, asks questions, changes work already assigned, adds work, or starts a new product,
 // and the CEO acts on it. A change to an assigned task edits that task; only a new product
-// becomes a new mission. Each new mission starts the conversation context fresh.
+// becomes a new mission. Guards make sure a slip by the model never starts a duplicate mission.
 import { getAgent, systemPrompt, remember } from './agents.js';
 import { complete, extractJson } from './llm.js';
 import { state, save, now } from './store.js';
 import { bus } from './bus.js';
 import { logActivity } from './activity.js';
 import { limited } from './limits.js';
+import { resolveTask, missionFor } from './matching.js';
 
 const CEO_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 
+const LIVE = ['planning', 'running', 'reporting', 'awaiting_approval', 'failed'];
+const clip = (x, n) => (String(x).length > n ? `${String(x).slice(0, n)}…` : String(x));
+
 function companyState(waiting) {
-  const active = Object.values(state.missions)
-    .filter((m) => ['planning', 'running', 'reporting', 'awaiting_approval'].includes(m.status))
+  const missions = Object.values(state.missions)
+    .filter((m) => LIVE.includes(m.status) || (m.status === 'done' && Date.now() - Date.parse(m.completedAt || 0) < 14 * 864e5))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     .slice(0, 6)
     .map((m) => {
       const tasks = m.taskIds.map((id) => state.tasks[id]).filter(Boolean);
-      return `- mission ${m.id}: ${m.title} — ${m.status}, due ${m.deadline}\n${tasks.map((t) => `  - task ${t.id}: ${t.title} → ${getAgent(t.agentId)?.name} [${t.status}]`).join('\n')}`;
+      const said = m.thread.filter((i) => i.role === 'user').slice(-3).map((i) => clip(i.text, 120));
+      return `- mission ${m.id} — product: ${m.product || m.title} [${m.status}]
+  goal: ${clip(m.goal, 200)}${said.length > 1 ? `\n  founder's latest instructions: ${said.slice(1).join(' | ')}` : ''}
+${tasks.map((t, i) => `  - T${i + 1} (task ${t.id}): ${t.title} → ${getAgent(t.agentId)?.name} [${t.status}]`).join('\n')}`;
     });
-  const recent = Object.values(state.missions)
-    .filter((m) => m.status === 'done')
-    .sort((a, b) => String(b.completedAt).localeCompare(String(a.completedAt)))
-    .slice(0, 2)
-    .map((m) => `- mission ${m.id}: ${m.title} — finished; tasks: ${m.taskIds.map((id) => state.tasks[id]).filter(Boolean).map((t) => `${t.id} ${t.title}`).join('; ')}`);
-  return `Active missions (one mission = one product):\n${active.join('\n') || '- none'}
-Recently finished:\n${recent.join('\n') || '- none'}
+  return `Missions (one mission = one product; newest first):\n${missions.join('\n') || '- none'}
 Files the founder sent in the last 24 h:\n${(state.telegram?.uploads || []).filter((u) => Date.now() - Date.parse(u.at) < 864e5).map((u) => `- ${u.path}`).join('\n') || '- none'}
 Waiting on the founder:\n${waiting.map((w, i) => `${i + 1}. ${w.label}`).join('\n') || '- nothing'}${state.limit ? `\nPAUSED on the usage limit until ${state.limit.resetAt}.` : ''}`;
 }
 
-/** The part of the conversation that belongs to the current mission: a new mission starts it fresh. */
-function currentContext(history) {
-  const from = state.ceoContextAt || '';
-  return history.filter((h) => String(h.at) >= from).slice(-8);
-}
+/** The conversation the CEO sees: the last messages, whatever missions were started in between. */
+const recentContext = (history) => history.slice(-10);
 
 /**
  * One turn of the founder talking to the CEO. Returns the CEO's reply (plain text for a phone),
@@ -48,8 +47,7 @@ export async function ceoChat(text, { via = 'telegram', focus = null, attachment
   const ceo = getAgent('ceo');
   const history = (state.chats.ceo ||= []);
   if (attachments.length) text = `${text}\n\n(Attached — saved in the workspace: ${attachments.join(', ')})`;
-  const asked = { role: 'user', content: text, via, at: now() };
-  history.push(asked);
+  history.push({ role: 'user', content: text, via, at: now() });
   save();
   bus.emit('event', { type: 'chat', agentId: 'ceo' });
 
@@ -93,13 +91,14 @@ CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one bl
 - "always … / never … / from now on …" → "rule".
 - Answers or approvals of something waiting → "answer" / "approve" / "changes".
 - Questions and status → just answer (you may read the team's files). No block.
-- Only use ids and item numbers from the lists above. If unclear which task or product, ask in one line.`;
+- If the message names or concerns a product in the list, it is NEVER a new mission: "edit" or "add".
+- Use the task id (or T-number) and mission id from the list. If unclear which task or product, ask in one line.`;
 
   let reply;
   try {
     reply = await complete({
       system,
-      messages: currentContext(history).map(({ role, content }) => ({ role, content })),
+      messages: recentContext(history).map(({ role, content }) => ({ role, content })),
       tools: CEO_TOOLS,
       agentId: 'ceo',
       kind: 'chat',
@@ -133,19 +132,34 @@ CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one bl
     }
     for (const a of actions.slice(0, 6)) {
       try {
+        // Guard: work about a product that already has a mission goes to that mission.
+        const existing = a.type === 'mission' && a.goal && !/\b(new|another|next|different)\s+(product|template|idea)\b/i.test(text) && (focused || missionFor(`${a.goal} ${text}`));
+        if (existing) {
+          a.type = 'add';
+          a.mission = existing.id;
+          a.text = String(a.goal);
+        }
         if (a.type === 'mission' && a.goal) {
           const hours = Math.min(24 * 60, Math.max(1, Number(a.deadline_hours) || 24));
           const m = createMission({ goal: String(a.goal).trim(), deadline: new Date(Date.now() + hours * 36e5).toISOString(), source: 'chat' });
-          state.ceoContextAt = asked.at; // a new product: the conversation starts fresh from here
           done.push(`▶️ New mission “${m.title}” (due in ${hours}h).`);
           missionId = m.id;
         } else if (a.type === 'edit') {
-          const t = state.tasks[a.task];
-          if (!t || !a.text) throw new Error('unknown task');
-          amendTask(t, String(a.text));
-          done.push(`✏️ Updated “${t.title}”.`);
+          const mission = state.missions[a.mission] || focused || null;
+          const t = resolveTask(a.task, mission) || resolveTask(a.task);
+          if (!a.text) throw new Error('no change given');
+          if (t) {
+            amendTask(t, String(a.text));
+            done.push(`✏️ Updated “${t.title}”.`);
+          } else {
+            // The task wasn't found: let the mission's planner place the change (it edits, never duplicates).
+            const m = mission || missionFor(`${a.text} ${text}`);
+            if (!m) throw new Error("I couldn't tell which task that changes. Which one?");
+            sendToMission(m, { text: String(a.text), mode: 'delegate' });
+            done.push(`📨 Passed to “${m.title}”.`);
+          }
         } else if (a.type === 'add' || a.type === 'followup') {
-          const m = state.missions[a.mission];
+          const m = state.missions[a.mission] || focused || missionFor(`${a.text} ${text}`);
           if (!m || !a.text) throw new Error('unknown mission');
           if (m.status === 'cancelled') m.status = 'done';
           sendToMission(m, { text: String(a.text), mode: 'delegate' });

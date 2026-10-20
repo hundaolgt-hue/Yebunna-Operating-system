@@ -21,6 +21,7 @@ import { connectedServices } from './connections.js';
 import { limited, isLimitError } from './limits.js';
 import { notifyFounder } from './telegram.js';
 import { publishTask, publishReport } from './drivesync.js';
+import { resolveTask, duplicateTask } from './matching.js';
 
 export { bus };
 
@@ -175,7 +176,6 @@ function newMission({ goal, deadline, source = 'founder' }) {
 
 export function createMission({ goal, deadline, source }) {
   const m = newMission({ goal, deadline, source });
-  if (!source || source === 'founder') state.ceoContextAt = m.createdAt; // a new product: the CEO chat starts fresh
   addThread(m, { role: 'user', kind: 'text', text: goal });
   plan(m).catch((e) => {
     fail(m, e);
@@ -430,7 +430,7 @@ async function plan(m, instruction) {
   const item = addThread(m, { role: 'ceo', kind: 'plan', taskIds: [] });
 
   const existing = missionTasks(m)
-    .map((t) => `- id ${t.id} [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}`)
+    .map((t, i) => `- T${i + 1} id ${t.id} [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}: ${String(t.deliverable || '').slice(0, 120)}`)
     .join('\n');
   const prompt = `Product / mission: ${m.goal}
 Now: ${fmt(now())} · deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} h left)
@@ -480,8 +480,25 @@ Reply with ONLY JSON:
     try {
       parsed = extractJson(raw);
       parsed.tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      parsed.edits = (Array.isArray(parsed.edits) ? parsed.edits : []).filter((e) => state.tasks[e?.task]?.missionId === m.id && e.change);
-      if (!parsed.tasks.length && !(instruction && parsed.edits.length)) throw new Error('The plan had no tasks.');
+      // Edits may name a task by id, key, "T2" or title.
+      parsed.edits = (Array.isArray(parsed.edits) ? parsed.edits : [])
+        .map((e) => ({ t: resolveTask(e?.task, m), change: e?.change }))
+        .filter((e) => e.t && e.change);
+      if (instruction) {
+        // A "new" task that repeats an existing one (same owner, same work) becomes an edit of it.
+        parsed.tasks = parsed.tasks.filter((spec) => {
+          const dup = duplicateTask(m, spec, resolveAgent(spec.agent)?.id);
+          if (dup) parsed.edits.push({ t: dup, change: [spec.brief, spec.deliverable && `Deliverable: ${spec.deliverable}`].filter(Boolean).join('\n') || instruction });
+          return !dup;
+        });
+      }
+      if (!parsed.tasks.length && !parsed.edits.length) {
+        if (!instruction) throw new Error('The plan had no tasks.');
+        if (attempt < 3) {
+          retry = `\n\nYour reply had no usable edit or task. If the founder's message changes existing work, put it in "edits" with the task id from the list (e.g. "${missionTasks(m)[0]?.id || 'task_...'}"). Reply with the full JSON.`;
+          continue;
+        }
+      }
       // Clarity gate: no task starts on a vague brief.
       const thin = unclearTasks(parsed.tasks);
       if (thin.length && attempt < 3) {
@@ -495,9 +512,21 @@ Reply with ONLY JSON:
     }
   }
   if (parsed.product && !m.product) m.product = String(parsed.product).slice(0, 50);
-  for (const e of parsed.edits) amendTask(state.tasks[e.task], String(e.change), { quiet: true });
+  const seen = new Set();
+  parsed.edits = parsed.edits.filter((e) => !seen.has(e.t.id) && seen.add(e.t.id));
+  for (const e of parsed.edits) amendTask(e.t, String(e.change), { quiet: true });
   const dropped = parsed.tasks.length ? addTasks(m, item, parsed.tasks) : [];
-  const edited = parsed.edits.map((e) => `✏️ Updated **${state.tasks[e.task].title}**: ${e.change}`);
+  const edited = parsed.edits.map((e) => `✏️ Updated **${e.t.title}**: ${e.change}`);
+  if (!parsed.tasks.length && !parsed.edits.length) {
+    // Nothing to change or add: say so and ask, instead of failing the mission.
+    item.kind = 'review';
+    item.text = `${String(parsed.summary || '').trim()}\n\nI couldn't tell which task this changes. Which one should it go to (e.g. T2)?`.trim();
+    notifyFounder(`❓ “${m.title}”: I couldn't tell which task your message changes. Which one (e.g. T2)?`, { type: 'mission', id: m.id });
+    m.status = 'running';
+    emitMission(m);
+    schedule(m);
+    return drainQueue(m);
+  }
   item.text = [String(parsed.summary || 'Plan ready.'), ...edited].join('\n\n') + (dropped.length ? `\n\n_(Skipped ${dropped.length} item(s) I couldn't match to a teammate.)_` : '');
   if (!parsed.tasks.length) {
     // Only edits: no new plan to approve, the work carries on.
