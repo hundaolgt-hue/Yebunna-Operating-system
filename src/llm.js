@@ -75,7 +75,14 @@ export function detectionReport() {
 // Strip API credentials so the CLI uses the subscription login, not API billing. The only
 // exception is the API fallback (Settings → Usage): while the plan's limit is hit, runs get the
 // founder's API key, and go back to the subscription when it resets.
-const childEnv = { ...process.env, MCP_TIMEOUT: process.env.MCP_TIMEOUT || '90000' };
+const childEnv = {
+  ...process.env,
+  MCP_TIMEOUT: process.env.MCP_TIMEOUT || '90000',
+  // Long commands (video renders, big spreadsheets) must not be killed at Claude Code's default
+  // 2/10-minute Bash timeout, which made bots start the same render over and over.
+  BASH_DEFAULT_TIMEOUT_MS: process.env.BASH_DEFAULT_TIMEOUT_MS || String(20 * 60_000),
+  BASH_MAX_TIMEOUT_MS: process.env.BASH_MAX_TIMEOUT_MS || String(90 * 60_000),
+};
 delete childEnv.ANTHROPIC_API_KEY;
 delete childEnv.ANTHROPIC_AUTH_TOKEN;
 
@@ -182,6 +189,10 @@ function releaseSlot() {
   } else running--;
 }
 
+// Claude Code's plan-limit notices: "You've hit your session limit · resets 3pm", "…weekly limit",
+// "Claude AI usage limit reached|1760014800", "5-hour limit reached ∙ resets 9am", "out of extra usage".
+export const LIMIT_TEXT = /you'?ve (hit|reached) your (session |weekly |daily |monthly |usage |opus |sonnet )?limit|usage limit reached|claude ai usage limit|\d+-hour limit reached|(session|weekly) limit reached|out of (extra )?usage/i;
+
 /** Thrown when a run used up its step budget; carries whatever it had written. */
 export class OutOfStepsError extends Error {
   constructor(partial) {
@@ -274,7 +285,9 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
   let timedOut = false;
   const kill = () => child.kill('SIGTERM');
-  const timer = setTimeout(() => ((timedOut = true), kill()), RUN_TIMEOUT_MS);
+  // Large tasks (video, models, deep research) get three times as long before they are stopped.
+  const runLimit = RUN_TIMEOUT_MS * (kind === 'task' && size === 'large' ? 3 : 1);
+  const timer = setTimeout(() => ((timedOut = true), kill()), runLimit);
   signal?.addEventListener('abort', kill, { once: true });
   child.on('error', () => {});
   child.stdin.on('error', () => {});
@@ -336,10 +349,11 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   if (result) recordUsage({ agentId, kind, model: mainModel(result.modelUsage) || model || MODEL || 'default', usage: result.usage, cost: result.total_cost_usd, turns: result.num_turns, billing: api ? 'api' : 'plan' });
   if (result && api) recordApiCost(result.total_cost_usd);
   if (signal?.aborted) throw new Error('aborted');
-  if (timedOut) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 60_000} minutes`);
+  if (timedOut) throw new Error(`timed out after ${runLimit / 60_000} minutes`);
   if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);
   // Sometimes the limit notice comes back as the "answer" instead of an error.
-  if (!result?.is_error && /^(claude ai usage limit reached|you've hit your limit|\d+-hour limit reached)/i.test(String(result?.result || lastText).trim())) {
+  const answer = String(result?.result || lastText).trim();
+  if (!result?.is_error && answer.length < 400 && LIMIT_TEXT.test(answer)) {
     result = { ...result, is_error: true, result: result?.result || lastText };
   }
   if (result?.is_error || (code !== 0 && !result)) {
@@ -353,7 +367,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
       throw new Error('Claude Code is not logged in. In cmd run `claude`, type /login, choose your Claude account (Pro/Max subscription), finish in the browser, type /exit, then try again.');
     }
     const all = `${why}\n${lastText}\n${stderr}`;
-    if (/usage limit|limit reached|hit your limit|limit will reset|resets? \d/i.test(all)) {
+    if (LIMIT_TEXT.test(all) || /limit will reset|resets? \d/i.test(all)) {
       const resetAt = parseReset(all);
       hitLimit(why, resetAt);
       throw new UsageLimitError(`Your Claude usage limit was reached — work pauses and resumes automatically${resetAt ? ` at ${new Date(resetAt).toLocaleString()}` : ''}.`, resetAt);

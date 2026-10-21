@@ -1,7 +1,7 @@
 // The company roster: built-in agents plus any bots created in the UI. Each has a
 // persona, specialties, a toolset, its own memory and its own skills.
 import { state, save, newId, now } from './store.js';
-import { connectionTools, connectionPrompt } from './connections.js';
+import { connectionTools, connectionPrompt, sampleVideosDir } from './connections.js';
 import { playbookPrompt } from './playbook.js';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -323,8 +323,17 @@ export const skillByName = (name) => {
 };
 
 /** A bot's core skills, resolved: [{ name, skill | null }]. */
+// Skills that make or edit video: the creative director always gets every one that is installed.
+const MOTION = /higgsfield|hyperframe|motion|remotion|video|animation|kinetic|ffmpeg|render/i;
+
 export function coreSkillsOf(agent) {
-  return (agent.coreSkills || []).map((name) => ({ name, skill: skillByName(name) }));
+  if (agent.id !== 'creative') return (agent.coreSkills || []).map((name) => ({ name, skill: skillByName(name) }));
+  const motion = Object.values(state.skills).filter((s) => s.status === 'active' && !s.house && MOTION.test(`${s.name} ${s.summary || ''}`));
+  // A listed name also matches an installed variant ("hyperframes" → "hyperframes-cli").
+  const listed = (agent.coreSkills || []).map((name) => ({ name, skill: skillByName(name) || motion.find((s) => s.name.toLowerCase().includes(name.toLowerCase())) || null }));
+  const used = new Set(listed.map((c) => c.skill).filter(Boolean));
+  const extra = motion.filter((s) => !used.has(s)).slice(0, 8).map((s) => ({ name: s.name, skill: s }));
+  return [...listed.filter((c, i) => !c.skill || listed.findIndex((x) => x.skill === c.skill) === i), ...extra];
 }
 
 /** Every installed skill, for the CEO to pick from when briefing a task. */
@@ -356,6 +365,13 @@ export function roster() {
     .join('\n');
 }
 
+/** Where the founder's sample videos are (the "sample videos" folder in Google Drive). */
+function sampleVideosNote() {
+  const dir = sampleVideosDir();
+  if (dir) return `\nSAMPLE VIDEOS (the founder's reference for every video): ${dir}\nStudy them before each video task (about 1 frame per second with ffmpeg into a temp folder, Read the frames, then delete them). Match their pacing, transitions, typography and finish.\n`;
+  return '\nSAMPLE VIDEOS: the founder keeps reference videos in a Google Drive folder named "sample videos", but it was not found (Google Drive not connected in Connections, or the folder is missing). Say so in your handover, and use references/ meanwhile.\n';
+}
+
 /**
  * Memory that goes into a bot's prompt: only standing facts and preferences the founder gave
  * (never notes about past missions — each mission starts clean; lessons live in the playbook).
@@ -373,7 +389,7 @@ export function systemPrompt(agent) {
   return `${agent.persona}
 ${
     core.length
-      ? `\nCORE SKILLS: ${agent.id === 'ceo' ? 'when you plan or brief work' : 'before you start a task'}, open the SKILL.md of each one that applies (Read) and follow it${agent.id === 'ceo' ? ' (not for reviews, chats or reports)' : ''}.
+      ? `\nCORE SKILLS: ${agent.id === 'ceo' ? 'when you plan or brief work' : 'before you start a task'}, open the SKILL.md of ${agent.id === 'creative' ? 'EVERY one of them' : 'each one that applies'} (Read) and follow it${agent.id === 'ceo' ? ' (not for reviews, chats or reports)' : ''}.
 ${core.map((c) => (c.skill ? `- ${c.skill.name} → ${c.skill.path || '(written skill: see below)'}` : `- ${c.name}: not installed; work without it and say so`)).join('\n')}\n${core
           .filter((c) => c.skill && !c.skill.path)
           .map((c) => `\n### Skill: ${c.skill.name}\n${c.skill.body}\n`)
@@ -394,7 +410,7 @@ founder ("Log in to a site"). Close the tabs you opened.\n`
 outside the workspace, no global installs, nothing that sends, publishes or spends. Delete your temp files.\n`
       : ''
   }
-Workspace: your current directory. Teammates' files are in missions/<mission>/. The founder's samples are in
+${agent.id === 'creative' ? sampleVideosNote() : ''}Workspace: your current directory. Teammates' files are in missions/<mission>/. The founder's samples are in
 references/<date>/: study them when the task mentions references or a style (images with Read; videos: ffmpeg
 ~1 frame/s to a temp folder, Read, delete). Never touch files outside the workspace.
 ${agent.id === 'ceo' ? `\nYour team (id: name, role):\n${roster()}\n` : ''}${memory.length ? `\nStanding facts from the founder:\n${memory.map((m) => `- ${m.text}`).join('\n')}\n` : ''}${

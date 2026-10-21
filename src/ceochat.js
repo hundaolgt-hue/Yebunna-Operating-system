@@ -7,7 +7,7 @@ import { complete, extractJson } from './llm.js';
 import { state, save, now } from './store.js';
 import { bus } from './bus.js';
 import { logActivity } from './activity.js';
-import { limited, isLimitError } from './limits.js';
+import { limited, isLimitError, onApi } from './limits.js';
 import { resolveTask, missionFor, isRoutine } from './matching.js';
 
 const CEO_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
@@ -148,6 +148,8 @@ CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one bl
       demo: () => `On it.\n\n\`\`\`actions\n${JSON.stringify([demoAction(text, focused)])}\n\`\`\``,
     });
   } catch (e) {
+    // The limit was hit and the team just switched to the API key: answer now, on the key.
+    if (isLimitError(e) && onApi() && !replay) return ceoTurn(text, { via, focus, attachments: [], replay: true });
     if (isLimitError(e)) return later();
     const msg = `⚠️ I couldn't reply: ${e.message}`;
     history.push({ role: 'assistant', content: msg, via, at: now() });

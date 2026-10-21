@@ -13,9 +13,11 @@ const ROOT = path.join(WORKSPACE, '.skills', 'custom');
 
 // Which bots own a known skill by default (others go to nobody: the CEO assigns them per task).
 export const CUSTOM_OWNERS = {
-  'higgsfield-motion': ['creative', 'design'],
-  'higgsfield-motion-saas': ['creative', 'design'],
-  'rapha-motion-video': ['creative', 'design'],
+  higgsfield: ['creative', 'design'],
+  'higgsfield-motion': ['creative'],
+  'higgsfield-motion-saas': ['creative'],
+  'rapha-motion-video': ['creative'],
+  hyperframes: ['creative'],
   'amharic-construction-ad-creatives': ['creative', 'design', 'marketing'],
   'viral-short-video-scripting': ['creative', 'marketing'],
   'ye-buna-market-research': ['research', 'ceo'],
@@ -31,6 +33,9 @@ export const CUSTOM_OWNERS = {
   'theme-factory': ['design'],
   'skill-creator': ['ceo'],
 };
+/** Default owners: a known skill's, or Vega (video) for any other video/motion skill. */
+const ownersFor = (name) => CUSTOM_OWNERS[name] || (/higgsfield|hyperframe|motion|remotion|video|animation/i.test(name) ? ['creative'] : []);
+
 // Claude.ai-only skills that mean nothing to a bot here.
 const SKIP = new Set(['docs', 'morning', 'import-memory', 'google-workspace', 'learn', 'session-start-hook']);
 
@@ -98,7 +103,7 @@ function register(dir, source) {
     body: '',
     path: path.relative(WORKSPACE, file).split(path.sep).join('/'),
     agentId: null,
-    agentIds: existing?.ownersEdited ? existing.agentIds : CUSTOM_OWNERS[skillName] || [],
+    agentIds: existing?.ownersEdited ? existing.agentIds : ownersFor(skillName),
     status: existing?.status === 'draft' ? 'draft' : 'active',
     source,
     pack: null,

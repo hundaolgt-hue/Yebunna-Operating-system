@@ -22,7 +22,7 @@ import {
   answerTask,
 } from './src/orchestrator.js';
 import { addRule, removeRule, listRules } from './src/playbook.js';
-import { resume as resumeAfterLimit, leaveApi, apiSpentToday } from './src/limits.js';
+import { resume as resumeAfterLimit, leaveApi, apiSpentToday, useApiIfPaused } from './src/limits.js';
 
 /** The API fallback settings for the browser: never the key itself. */
 function publicFallback() {
@@ -508,6 +508,7 @@ const routes = {
       if (!f.enabled) leaveApi('turned off');
     }
     save();
+    useApiIfPaused(); // already paused on the limit: switch to the key right away
     bus.emit('event', { type: 'apiFallback', apiFallback: publicFallback(), apiMode: state.apiMode });
     send(res, 200, publicFallback());
   },

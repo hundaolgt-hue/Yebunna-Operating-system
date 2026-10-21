@@ -91,7 +91,7 @@ test('a .skill file uploads into the library and reaches its bots', async () => 
   const [s] = await res.json();
   assert.equal(s.name, 'higgsfield-motion');
   assert.equal(s.path, '.skills/custom/higgsfield-motion/SKILL.md');
-  assert.deepEqual(s.agentIds, ['creative', 'design']);
+  assert.deepEqual(s.agentIds, ['creative'], 'motion skills belong to the video director');
   assert.ok(fs.existsSync(path.join(TMP, 'w', '.skills/custom/higgsfield-motion/references/a.md')));
   assert.ok(!fs.existsSync(path.join(TMP, 'w', '.skills/custom/evil.txt')) && !fs.existsSync(path.join(TMP, 'w', '.skills/evil.txt')));
   const bad = await fetch(`${BASE}/api/skills/upload?name=x.skill`, { method: 'POST', body: Buffer.from('not a zip') });

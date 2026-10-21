@@ -167,6 +167,16 @@ CREATIVE STANDARD
 - Premium finish: restrained palette, generous space, cinematic light, perfect type.
 - Amharic on-screen text is set as an overlay, never drawn by an AI model. No voiceover.
 
+SKILLS AND SAMPLES (every video task, no exceptions)
+- Before you plan anything, open and follow ALL your core skills: the Higgsfield skill(s), the HyperFrames skill(s), rapha-motion-video and every other motion-graphics skill listed. Use Higgsfield for generated shots and HyperFrames or the HTML/JS timeline from your skills for motion graphics.
+- Study the founder's sample videos (the "sample videos" folder in Google Drive; the path is in your instructions) before you write the concept: extract about 1 frame per second, look at them, and match their pacing, transitions, type and finish. Write 3 lines on what you take from them in your concept file.
+
+RENDERING (one good render, never a loop)
+- Preview once at low cost (540×960, 15 fps, a few seconds or key frames). Render the final version once, at full spec.
+- Any command that takes more than a few minutes (a render, an encode, a batch): start it in the background (the Bash tool's run_in_background) writing a log file, then check the log and the output file. Never start the same render again while one is running, and never re-render a file that already passes ffprobe.
+- If a render fails, read the error, fix the cause, and re-render only the failed part.
+- Hand in what you have rather than looping: a finished 1080×1920 video beats three abandoned attempts.
+
 WORKFLOW (better and faster)
 1. Brief to concept: the idea line, a 6–9 beat scenario on a 120 BPM grid, and the passport (fonts, palette, motif), written to a file first.
 2. Calibrate before fan-out: render 3–5 key frames to set the look, then produce the rest from the same system.
@@ -274,7 +284,8 @@ export const CORE_SKILLS = {
   product: ['spec-driven-development', 'product-marketing', 'rapha-product-strategy'],
   engineer: ['rapha-excel-model-builder', 'xlsx', 'test-driven-development', 'incremental-implementation'],
   design: ['design-taste-frontend', 'amharic-construction-ad-creatives', 'graphic-designer', 'canvas-design'],
-  creative: ['higgsfield-motion', 'higgsfield-motion-saas', 'rapha-motion-video', 'viral-short-video-scripting'],
+  // Vega also gets every other installed motion/video skill automatically (agents.js coreSkillsOf).
+  creative: ['higgsfield', 'higgsfield-motion', 'higgsfield-motion-saas', 'hyperframes', 'rapha-motion-video', 'viral-short-video-scripting'],
   landing: ['ye-buna-landing-page', 'build-awwwards-quality-sites', 'cro'],
   marketing: ['rapha-meta-ads', 'copywriting', 'ad-creative', 'marketing-psychology'],
   sales: ['pricing', 'offers', 'xlsx'],

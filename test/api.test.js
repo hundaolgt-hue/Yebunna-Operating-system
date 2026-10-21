@@ -56,3 +56,34 @@ test('at the reset the team goes back to the subscription', () => {
   assert.equal(onApi(), false);
   assert.equal(limited(), false);
 });
+
+test("every wording of the plan's limit is recognised", async () => {
+  const { LIMIT_TEXT } = await import('../src/llm.js');
+  for (const t of ["You've hit your session limit · resets 3pm", "You've hit your weekly limit", 'Claude AI usage limit reached|1760014800', '5-hour limit reached ∙ resets 9am']) assert.ok(LIMIT_TEXT.test(t), t);
+  assert.equal(LIMIT_TEXT.test('Here is the plan for the session.'), false);
+});
+
+test('turning the fallback on while already paused switches to the API key at once', async () => {
+  const { useApiIfPaused } = await import('../src/limits.js');
+  state.apiSpend = null;
+  state.apiFallback = { ...state.apiFallback, enabled: false };
+  hitLimit("You've hit your session limit", inHour());
+  assert.ok(limited());
+  state.apiFallback.enabled = true;
+  assert.equal(useApiIfPaused(), true);
+  assert.equal(limited(), false);
+  assert.equal(onApi(), true);
+  leaveApi('test');
+});
+
+test("Vega always opens every motion skill and studies the Drive 'sample videos' folder", async () => {
+  const { saveConnection } = await import('../src/connections.js');
+  const { systemPrompt, getAgent } = await import('../src/agents.js');
+  const drive = path.join(TMP, 'My Drive');
+  fs.mkdirSync(path.join(drive, 'Rapha', 'Sample Videos'), { recursive: true });
+  saveConnection('gdrive', { config: { path: drive } });
+  const p = systemPrompt(getAgent('creative'));
+  assert.match(p, /EVERY one of them/);
+  assert.match(p, new RegExp(`SAMPLE VIDEOS.*${path.join('Rapha', 'Sample Videos').replace(/\\/g, '\\\\')}`));
+  assert.match(p, /run_in_background/);
+});

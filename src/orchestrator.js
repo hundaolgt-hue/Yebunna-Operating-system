@@ -681,6 +681,13 @@ function assignmentPrompt(m, t, agent) {
   const skill = t.skillId && state.skills[t.skillId];
   const workDir = (t.workDir ||= taskWorkDir(m, t));
   const revision = t.feedback ? `\n\nCHANGE REQUESTED: ${t.feedback}\nYour earlier files are in ${workDir}/: update them; don't start over unless the change needs it.` : '';
+  let earlier = [];
+  try {
+    earlier = fs.readdirSync(path.join(WORKSPACE, workDir)).filter((f) => !f.startsWith('.'));
+  } catch {}
+  const resume = earlier.length && !t.feedback
+    ? `\n\nAN EARLIER ATTEMPT LEFT FILES in ${workDir}/ (${earlier.slice(0, 12).join(', ')}${earlier.length > 12 ? ', …' : ''}). Check them first (ffprobe any video, open the rest) and keep everything that is already good. Never redo or re-render finished work; continue from where it stopped.`
+    : '';
   const named = (t.skills || []).map((name) => ({ name, s: skillByName(name) }));
   const skills = named.map(({ name, s }) => (s ? `- ${s.name} → ${s.path ? `Read ${s.path} and follow it` : 'written skill, below'}` : `- ${name} → not installed: find it with find-skills (\`npx skills find ${name}\`) and install it into .skills/, or work without it and say so`));
   // Written skills: the ones the CEO named, plus the bot's own (taught, written or role skills; latest 3).
@@ -696,7 +703,7 @@ Save files ONLY in ${workDir}/ (this task's folder; mission folder ${m.folder}/:
 Name files clearly for the founder (e.g. niche-report.md, profitcheck-model.xlsx, ad-video-9x16.mp4); no dates or
 version numbers in names (they are added when the work is published). Update files in place on a revision; delete
 drafts and temp files before you hand in, so the folder holds only the final deliverables.
-${skill?.path ? `\nUse your skill "${skill.name}": Read ${skill.path} and follow it.\n` : ''}${writtenBodies.length ? `\n${writtenBodies.join('\n\n')}\n` : ''}${inputs ? `\nHANDED OVER BY TEAMMATES (open their files when you need detail):\n${inputs}` : ''}${revision}
+${skill?.path ? `\nUse your skill "${skill.name}": Read ${skill.path} and follow it.\n` : ''}${writtenBodies.length ? `\n${writtenBodies.join('\n\n')}\n` : ''}${inputs ? `\nHANDED OVER BY TEAMMATES (open their files when you need detail):\n${inputs}` : ''}${revision}${resume}
 
 Do the work now, in files. Check them (e.g. run them) before you finish.
 Your FINAL message is only the handover, at most 150 words, exactly in this form:
@@ -751,6 +758,10 @@ async function runTask(m, t) {
     }
     const field = ev.type === 'reasoning' ? 'reasoning' : 'output';
     if (field === 'reasoning') track(ev.text);
+    // A command or a Higgsfield generation is running (a render can be silent for a long time).
+    const tool = field === 'reasoning' && String(ev.text).match(/\[using ([^\]]+)\]/);
+    if (tool) t.toolBusy = /^(Bash|mcp__higgsfield)/.test(tool[1]);
+    else if (String(ev.text).trim()) t.toolBusy = false;
     t[field] += ev.text;
     emitDelta('task', t.id, m.id, field, ev.text);
   };
@@ -1206,7 +1217,8 @@ setInterval(() => {
   for (const [taskId, ctl] of taskRuns) {
     const t = state.tasks[taskId];
     if (!t || t.status !== 'in_progress' || !t.lastActivityAt || t.waitingSlot) continue;
-    if (t0 - Date.parse(t.lastActivityAt) < STALL_MS) continue;
+    // While a command or a generation runs, allow it up to the Bash limit (90 min) before calling it stuck.
+    if (t0 - Date.parse(t.lastActivityAt) < (t.toolBusy ? Math.max(STALL_MS, 95 * 60_000) : STALL_MS)) continue;
     // No output, thinking or tool use for too long: stop the run; the CEO works out why.
     t.stalled = true;
     logActivity('ceo', `stopped “${t.title}”: no progress for ${Math.round(STALL_MS / 60_000)} minutes`, { type: 'task', id: t.id, missionId: t.missionId });

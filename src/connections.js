@@ -303,6 +303,33 @@ export function connectionRuntime(agentId) {
   return { env, addDirs };
 }
 
+let sampleCache = { at: 0, dir: null };
+/**
+ * The founder's "sample videos" folder in Google Drive (found by name, up to 3 folders deep;
+ * re-checked every 10 minutes). Null when Drive isn't connected or the folder doesn't exist.
+ */
+export function sampleVideosDir() {
+  const c = conns().gdrive;
+  if (!c?.enabled || !c.config?.path || !fs.existsSync(c.config.path)) return null;
+  if (Date.now() - sampleCache.at < 10 * 60_000) return sampleCache.dir;
+  const want = /^sample[\s_-]*videos?$/i;
+  let found = null;
+  const walk = (dir, depth) => {
+    if (found || depth > 3) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) if (e.isDirectory() && want.test(e.name.trim())) return void (found = path.join(dir, e.name));
+    for (const e of entries) if (e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('$')) walk(path.join(dir, e.name), depth + 1);
+  };
+  walk(c.config.path, 0);
+  sampleCache = { at: Date.now(), dir: found };
+  return found;
+}
+
 /** Where finished work is published in Drive (created when needed), or null when Drive isn't connected. */
 const outputsDir = (cfg) => path.join(cfg.path, String(cfg.outputs || 'Yebunna OS').replace(/[<>:"/\\|?*]/g, ' ').trim() || 'Yebunna OS');
 export function driveOutputRoot() {

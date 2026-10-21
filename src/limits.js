@@ -134,6 +134,19 @@ export function apiFailed(message) {
   hitLimit(`API key: ${message}`, backAt, 'usage', { noApi: true });
 }
 
+/**
+ * The fallback was just turned on (or the app started) while paused on the plan's limit:
+ * switch to the API key now instead of waiting for the reset.
+ */
+export function useApiIfPaused() {
+  if (!state.limit || state.limit.kind !== 'usage' || state.apiMode || !canUseApi()) return false;
+  const { resetAt, known, message } = state.limit;
+  state.limit = null;
+  clearTimeout(timer);
+  enterApi(known ? resetAt : null, message);
+  return true;
+}
+
 /** A run hit the limit: switch to the API key if allowed, otherwise pause everything until it resets. */
 export function hitLimit(message, resetAt, kind = 'usage', { noApi = false } = {}) {
   if (kind === 'usage' && !noApi && !state.apiMode && canUseApi()) return enterApi(resetAt, message);
@@ -169,6 +182,7 @@ export function resume(reason = 'limit reset') {
 
 // After a restart, keep waiting (or resume straight away if the reset already passed).
 setTimeout(() => {
+  if (useApiIfPaused()) return;
   if (state.limit) arm();
   if (state.apiMode) armApi();
 }, 0);
