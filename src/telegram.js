@@ -192,6 +192,12 @@ async function onMessage(msg) {
     resume('founder asked');
     return reply('▶️ Trying again now. If the limit is still on, work pauses again and I will tell you when it resets.');
   }
+  if (/^\/fresh\b/i.test(text)) {
+    const { freshStart } = await import('./ceochat.js');
+    freshStart();
+    return reply('🧹 Fresh start: the old conversation is archived. Rules, facts and missions stay.');
+  }
+  if (/^\/help\b/i.test(text)) return reply('Commands: /status (what the team is doing), /answer <n> <text>, /resume (try again after a pause), /fresh (start the conversation over), "stop" (stop everything), "undo" or "no, I didn\'t ask for that" (revert my last action).');
   const numbered = text.match(/^\/answer\s+(\d+)\s+([\s\S]+)/i);
   if (numbered) {
     const item = waitingItems()[Number(numbered[1]) - 1];

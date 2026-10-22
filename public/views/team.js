@@ -210,7 +210,7 @@ export async function renderAgent(agentId) {
         ${a.computer ? '<button class="btn-ghost" data-login>🔑 Log in to a site</button>' : ''}
         <button class="btn-ghost" data-edit-bot>✎ Edit role</button>
         ${agentId !== 'ceo' ? '<button class="btn-ghost" data-assign>Assign task</button>' : ''}
-        <button class="btn-ghost" data-clear>Clear chat</button>
+        ${agentId === 'ceo' ? '<button class="btn-ghost" data-fresh title="Archive this conversation and start over. Rules, facts and missions stay.">🧹 Fresh start</button>' : '<button class="btn-ghost" data-clear>Clear chat</button>'}
         ${a.custom ? '<button class="btn-ghost danger" data-del-bot>Delete bot</button>' : ''}
       </div></div>
     <div class="split">
@@ -218,7 +218,7 @@ export async function renderAgent(agentId) {
         <div class="scroll"><div class="thread" data-chat>${
           history.length
             ? history.map((msg) => chatMsg(a, msg)).join('')
-            : `<div class="empty">${avatar(agentId, 'lg')}<p>Ask ${esc(a.name)} anything about ${esc(a.specialties.join(', ').toLowerCase())}.<br/>Say “remember …” to add to its memory.</p></div>`
+            : `<div class="empty">${avatar(agentId, 'lg')}<p>${agentId === 'ceo' ? 'Tell Atlas what you want. One thing per message works best: a change to a task, new work for a product, a new product, or “stop” / “undo”.' : `Ask ${esc(a.name)} anything about ${esc(a.specialties.join(', ').toLowerCase())}.`}<br/>Say “remember …” to add to its memory.</p></div>`
         }</div></div>
         <div class="dock">${composer({ placeholder: `Message ${a.name}…` })}</div>
       </div>
@@ -260,10 +260,16 @@ export async function renderAgent(agentId) {
   $('[data-assign]', v)?.addEventListener('click', () => assignDialog(agentId));
   $('[data-edit-bot]', v).addEventListener('click', () => editBotDialog(agentId));
   $('[data-login]', v)?.addEventListener('click', () => loginDialog(agentId));
-  $('[data-clear]', v).addEventListener('click', async () => {
+  $('[data-clear]', v)?.addEventListener('click', async () => {
     await api(`/api/chats/${agentId}`, { method: 'DELETE' });
     S.chats[agentId] = [];
     renderAgent(agentId);
+  });
+  $('[data-fresh]', v)?.addEventListener('click', async () => {
+    if (!confirm('Start the conversation over? The old one is archived; rules, facts and missions stay.')) return;
+    await api('/api/chats/ceo/fresh', { method: 'POST' }).catch((e) => toast(e.message));
+    delete S.chats.ceo;
+    renderAgent('ceo');
   });
   $('[data-del-bot]', v)?.addEventListener('click', async () => {
     if (!confirm(`Delete ${a.name}? Its memory is deleted too.`)) return;

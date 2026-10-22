@@ -33,6 +33,10 @@ export const state = {
   telegram: { sent: [], offset: 0 }, // alerts sent (for matching replies) and the polling offset
   lastRetroAt: null,
   ceoPending: [], // CEO chat messages kept while paused on the usage limit
+  ceoFocus: null, // { missionId, taskId, at }: what the founder and the CEO are working on right now
+  ceoSummary: null, // { text, upTo }: the older part of the CEO conversation, compacted
+  ceoActions: [], // the CEO's last actions, for "undo"
+  ceoArchive: [], // conversations archived by "Fresh start"
   apiFallback: null, // { enabled, key (stays on this PC), dailyCapUsd, noOpus } — Settings → Usage
   apiMode: null, // { since, backAt, known } while runs are billed to the API key
   apiSpend: null, // { day, usd } API money spent today

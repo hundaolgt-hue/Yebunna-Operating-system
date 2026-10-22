@@ -21,7 +21,7 @@ import { connectedServices } from './connections.js';
 import { limited, isLimitError } from './limits.js';
 import { notifyFounder } from './telegram.js';
 import { publishTask, publishReport } from './drivesync.js';
-import { resolveTask, duplicateTask } from './matching.js';
+import { resolveTask, duplicateTask, overlap, listsSeveral } from './matching.js';
 
 export { bus };
 
@@ -242,7 +242,7 @@ export function sendToMission(m, { text, mode }) {
   addThread(m, { role: 'user', kind: 'text', text, mode });
   if (m.status === 'planning' || m.status === 'reporting') {
     // The CEO is mid-plan or mid-report: queue it and handle it right after.
-    (m.queue ||= []).push({ text, mode });
+    (m.queue ||= []).push({ text, mode, at: now() });
     addThread(m, { role: 'ceo', kind: 'review', text: `Noted — I'll handle that as soon as I finish the current ${m.status === 'planning' ? 'plan' : 'report'}.` });
     return;
   }
@@ -468,7 +468,8 @@ ${
       ? `The founder says: ${instruction}
 First decide what this is. If it changes, corrects or adds detail to work already assigned, put it in "edits"
 (by task id) and add NO task for it. Add a task only for genuinely new work no existing task covers. "tasks"
-may be empty.`
+may be empty. The founder asked for ONE thing: reply with ONE edit or ONE task (more only if they listed
+several). Never touch finished tasks they didn't mention.`
       : 'Plan the work to ship this product.'
   }
 
@@ -524,12 +525,21 @@ Reply with ONLY JSON:
         .map((e) => ({ t: resolveTask(e?.task, m), change: e?.change }))
         .filter((e) => e.t && e.change);
       if (instruction) {
-        // A "new" task that repeats an existing one (same owner, same work) becomes an edit of it.
+        // A "new" task that repeats an existing one becomes an edit of it when that is what the
+        // founder asked about; otherwise it is dropped (finished work is never restarted on the side).
         parsed.tasks = parsed.tasks.filter((spec) => {
           const dup = duplicateTask(m, spec, resolveAgent(spec.agent)?.id);
-          if (dup) parsed.edits.push({ t: dup, change: [spec.brief, spec.deliverable && `Deliverable: ${spec.deliverable}`].filter(Boolean).join('\n') || instruction });
-          return !dup;
+          if (!dup) return true;
+          if (overlap(instruction, `${dup.title} ${dup.deliverable || ''}`) >= 0.25) parsed.edits.push({ t: dup, change: [spec.brief, spec.deliverable && `Deliverable: ${spec.deliverable}`].filter(Boolean).join('\n') || instruction });
+          return false;
         });
+        // An edit to a finished task that the founder didn't mention is a guess: drop it.
+        parsed.edits = parsed.edits.filter((e) => !['done', 'approval'].includes(e.t.status) || overlap(instruction, `${e.t.title} ${e.t.deliverable || ''}`) >= 0.2 || instruction.includes(e.t.id));
+        // One message = one change, unless the founder listed several things.
+        const wanted = listsSeveral(instruction) ? 3 : 1;
+        const changes = [...parsed.edits.map((e) => ({ edit: e })), ...parsed.tasks.map((t) => ({ task: t }))].slice(0, wanted);
+        parsed.edits = changes.filter((c) => c.edit).map((c) => c.edit);
+        parsed.tasks = changes.filter((c) => c.task).map((c) => c.task);
       }
       if (!parsed.tasks.length && !parsed.edits.length) {
         if (!instruction) throw new Error('The plan had no tasks.');
@@ -837,7 +847,11 @@ async function runTask(m, t) {
       finishTask(m, t);
     }
   } catch (e) {
-    if (m.status === 'cancelled') return;
+    if (m.status === 'cancelled' || t.stopped) return;
+    if (t.reverting) {
+      t.reverting = false; // undone by the founder: it is already back as it was
+      return;
+    }
     if (t.amendPending) {
       // Stopped because the founder changed the task: start again with the change.
       t.brief = `${t.brief}\n\nFOUNDER CHANGE: ${t.amendPending}`;
@@ -1021,6 +1035,8 @@ export function amendTask(t, change, { quiet = false } = {}) {
   const m = state.missions[t.missionId];
   if (!m) throw new Error('mission not found');
   change = String(change).trim();
+  // Enough to put it back exactly as it was (the founder can say "no, undo that").
+  t.lastAmend = { at: now(), status: t.status, brief: t.brief, feedback: t.feedback, error: t.error, output: t.output, file: t.file, missionStatus: m.status, change };
   if (!quiet) addThread(m, { role: 'user', kind: 'text', text: `✏️ Change to “${t.title}”: ${change}` });
   if (t.status === 'founder') return answerTask(t, change);
   if (t.status === 'queued') {
@@ -1045,6 +1061,64 @@ export function amendTask(t, change, { quiet = false } = {}) {
   emitMission(m);
   schedule(m);
   return t;
+}
+
+/** Put a task back as it was before its last change (an edit the founder didn't mean). */
+export function undoAmend(t) {
+  const u = t.lastAmend;
+  const m = state.missions[t.missionId];
+  if (!u || !m) return false;
+  if (t.status === 'in_progress') {
+    t.reverting = true; // the aborted run must not be treated as a failure
+    taskRuns.get(t.id)?.abort();
+  }
+  t.amendPending = null;
+  Object.assign(t, { status: u.status, brief: u.brief, feedback: u.feedback, error: u.error, output: u.output, file: u.file, lastAmend: null });
+  emitTask(t);
+  logActivity('ceo', `undid the change to “${t.title}”`, { type: 'task', id: t.id, missionId: m.id });
+  if (m.status === 'running' && missionTasks(m).every((x) => ['done', 'failed'].includes(x.status)) && ['done', 'failed'].includes(u.missionStatus)) m.status = u.missionStatus;
+  emitMission(m);
+  schedule(m);
+  return true;
+}
+
+/** The founder says stop: the task is stopped for good (it won't be retried or re-briefed). */
+export function stopTask(t, reason = 'Stopped by the founder') {
+  const m = state.missions[t.missionId];
+  if (!m) return false;
+  if (!OPEN.includes(t.status)) return false;
+  if (t.status === 'in_progress') taskRuns.get(t.id)?.abort();
+  t.stopped = true;
+  t.amendPending = null;
+  t.status = 'failed';
+  t.error = reason;
+  emitTask(t);
+  addThread(m, { role: 'user', kind: 'text', text: `⏹ Stopped “${t.title}”.` });
+  logActivity('ceo', `stopped “${t.title}” at the founder's request`, { type: 'task', id: t.id, missionId: m.id });
+  schedule(m);
+  return true;
+}
+
+/**
+ * Undo everything that happened in a mission since a moment: tasks added after it are removed,
+ * tasks changed after it are put back. Used when the founder says "no, I didn't ask for that".
+ */
+export function undoSince(m, at) {
+  let n = 0;
+  for (const t of missionTasks(m)) {
+    if (t.createdAt >= at) {
+      if (t.status === 'in_progress') taskRuns.get(t.id)?.abort();
+      m.taskIds = m.taskIds.filter((id) => id !== t.id);
+      delete state.tasks[t.id];
+      bus.emit('event', { type: 'task.deleted', id: t.id, missionId: m.id });
+      n++;
+    } else if (t.lastAmend && t.lastAmend.at >= at && undoAmend(t)) n++;
+  }
+  m.queue = (m.queue || []).filter((q) => !(q.at && q.at >= at));
+  if (m.status === 'running' && !missionTasks(m).some((t) => !['done', 'failed'].includes(t.status))) m.status = missionTasks(m).length ? 'done' : 'cancelled';
+  emitMission(m);
+  schedule(m);
+  return n;
 }
 
 /** The CEO checks a deliverable. If the review itself fails, the work still counts. */

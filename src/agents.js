@@ -397,7 +397,7 @@ ${core.map((c) => (c.skill ? `- ${c.skill.name} → ${c.skill.path || '(written 
       : ''
   }
 ${COMPANY}
-${playbookPrompt()}${agent.tools.includes('WebSearch') ? '\nWeb: search when facts matter; cite sources inline; never narrate your searching.\n' : ''}${
+${playbookPrompt(agent.id)}${agent.tools.includes('WebSearch') ? '\nWeb: search when facts matter; cite sources inline; never narrate your searching.\n' : ''}${
     agent.computer
       ? `\nBROWSER (browser_* tools): use it for sites without an API. Read the snapshot before acting. Never buy, send,
 publish, post, delete, or change account or billing settings unless the task says exactly that. Never type

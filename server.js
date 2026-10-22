@@ -31,7 +31,7 @@ function publicFallback() {
 }
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
-import { ceoChat } from './src/ceochat.js';
+import { ceoChat, freshStart } from './src/ceochat.js';
 import { missionFor } from './src/matching.js';
 import { seedHouseSkills } from './src/house.js';
 import { storageReport, cleanTemp } from './src/disk.js';
@@ -348,6 +348,10 @@ const routes = {
 
   // ---- 1:1 chat with any bot, streamed back as SSE ----
   'GET /api/chats/:agentId': (req, res, { agentId }) => send(res, 200, state.chats[agentId] || []),
+  'POST /api/chats/ceo/fresh': (req, res) => {
+    freshStart();
+    send(res, 200, { ok: true });
+  },
   'DELETE /api/chats/:agentId': (req, res, { agentId }) => {
     delete state.chats[agentId];
     save();

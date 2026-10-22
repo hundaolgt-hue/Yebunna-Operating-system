@@ -34,11 +34,23 @@ One mission is one product.
 5. **Escalate.** A watchdog flags any task that passes its deadline.
 6. **Report.** Once every task is finished, Atlas writes a report of at most 150 words. Every handover and the report are saved in the mission folder.
 
+### Talking to the CEO
+
+The CEO chat (in the app and on Telegram) is one conversation, built so it can't drift:
+
+- **It knows what you're working on.** The CEO keeps a *current focus*: the product and the task you last talked about. An ambiguous message ("make it shorter") is read against that focus, not against every task in the company. Replying to a Telegram alert, or naming a product, moves the focus.
+- **One message = one action.** A message does one thing: a change to a task, new work for a product, a new product, or a stop. If you list several things (bullets, "and also", "and then"), it does up to three. Anything beyond that is left out and the CEO says so, so one stray idea can never set off a chain of tasks.
+- **Finished work is only redone when you name it.** A change goes to the task you name (by title, file name or T-number) or to the task in focus. If the CEO would have to guess which finished task you mean, it asks ("say *yes, T2*") instead of restarting something.
+- **"stop"** stops everything that is running. "stop T2" stops one task; it stays stopped.
+- **"undo", "no", "wrong", "I didn't ask for that", "cancel that"** revert the CEO's last action: a started mission is cancelled, a redone task is put back exactly as it was (files included), added tasks are removed. Up to 20 actions are kept for a few hours. The CEO also writes down the correction as a **lesson** (a DON'T rule for the CEO only, shown under **Meetings → Playbook**) so the same mistake isn't repeated. Lessons are never dropped.
+- **Short memory.** Once the conversation passes about 20 messages, the older part is compacted into a 120-word summary (one Haiku run) and only the last 8 messages are kept in full. **🧹 Fresh start** (a button in the CEO chat, or `/fresh` on Telegram) archives the whole conversation; the playbook, your standing facts and all missions stay.
+- Telegram commands: `/status`, `/answer <n> <text>`, `/resume`, `/fresh`, `/help`.
+
 ### Changing work that is already assigned
 
 The CEO sorts every message (in the app, on Telegram, or in a mission's box) before acting on it:
 - **A change, correction or comment on assigned work** edits that task. It never creates a new task or mission. A queued task gets the change in its brief. A running task stops and restarts with the change. A finished task is redone with the change.
-- **New work for the same product** is added to that product's mission.
+- **New work for the same product** is added to that product's mission. A follow-up produces one change (or up to three if you listed several); finished tasks you didn't mention are never touched.
 - **A different product** becomes a new mission.
 - **Questions and status checks** just get an answer.
 

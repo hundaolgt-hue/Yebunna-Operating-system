@@ -89,3 +89,6 @@ export function missionFor(goal) {
       .find((m) => (m.product ? hits(m.product) >= 1 : hits(m.title) >= 2)) || null
   );
 }
+
+/** Does the founder's message list several things (bullets, numbers, "and also", "then")? */
+export const listsSeveral = (text) => /(^|\n)\s*([-*•]|\d+[.)])\s+\S/m.test(text) || /\b(and also|and then|as well as|secondly|thirdly)\b/i.test(text) || (String(text).match(/;/g) || []).length >= 1;
