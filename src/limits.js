@@ -22,6 +22,16 @@ export class UsageLimitError extends Error {
 }
 export const isLimitError = (e) => e?.code === 'usage_limit';
 
+/** Why the team is paused, in plain words, with the exact text that caused it. */
+export function pauseReason() {
+  const l = state.limit;
+  if (!l) return null;
+  const until = new Date(l.resetAt).toLocaleString();
+  if (l.kind === 'disk') return `Paused because the disk is almost full (${l.message}). It resumes by itself when there is room: Settings → Storage shows what uses space.`;
+  if (/^API key:|Daily API cap/.test(l.message || '')) return `Paused: ${l.message}. It resumes at ${until}, or click Try now.`;
+  return `Paused on Claude's usage limit until ${until}. Claude Code said: “${String(l.message || '').slice(0, 160)}”. If your plan isn't limited, click Try now — the app also checks by itself a few minutes after a pause.`;
+}
+
 /** Is the company paused because of the plan's usage limit? */
 export const limited = () => Boolean(state.limit);
 

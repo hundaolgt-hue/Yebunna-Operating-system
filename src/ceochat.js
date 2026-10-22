@@ -7,7 +7,7 @@ import { complete, extractJson } from './llm.js';
 import { state, save, now } from './store.js';
 import { bus } from './bus.js';
 import { logActivity } from './activity.js';
-import { limited, isLimitError, onApi } from './limits.js';
+import { limited, isLimitError, onApi, pauseReason } from './limits.js';
 import { resolveTask, missionFor, isRoutine } from './matching.js';
 
 const CEO_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
@@ -65,7 +65,7 @@ bus.on('limit.reset', async () => {
 /** The conversation the CEO sees: the last messages, whatever missions were started in between. */
 // The app's own notices (paused, couldn't reply) are not part of the conversation: a model that
 // reads them tends to repeat them.
-const NOTICE = /^\W*(we're paused on your claude usage limit|i couldn't reply|⚠️ i couldn't reply)/i; // notices saved before they were marked
+const NOTICE = /^\W*(we're paused on your claude usage limit|paused|i couldn't reply|⚠️ i couldn't reply)/i; // notices saved before they were marked
 const recentContext = (history) => history.filter((h) => !h.notice && !(h.role === 'assistant' && NOTICE.test(h.content || ''))).slice(-10);
 
 /**
@@ -95,7 +95,7 @@ async function ceoTurn(text, { via = 'telegram', focus = null, attachments = [],
   // Paused on the usage limit: keep the message and act on it as soon as the limit resets.
   const later = () => {
     (state.ceoPending ||= []).push({ text, via, focus });
-    const msg = `⏸ We're paused on your Claude usage limit${state.limit?.resetAt ? ` until ${new Date(state.limit.resetAt).toLocaleString()}` : ''}. I've kept your message and will act on it as soon as the limit resets (/resume to try now).`;
+    const msg = `⏸ ${pauseReason() || 'Paused.'} I've kept your message and will act on it as soon as work resumes (/resume to try now).`;
     history.push({ role: 'assistant', content: msg, via, at: now(), notice: true });
     save();
     return msg;

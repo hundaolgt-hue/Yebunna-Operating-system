@@ -275,7 +275,8 @@ function renderLimit() {
   el.hidden = !S.limit;
   if (!S.limit) return;
   const at = new Date(S.limit.resetAt).toLocaleString();
-  el.innerHTML = `<span>⏸ <b>Paused — Claude usage limit reached.</b> Work resumes automatically ${S.limit.known ? `when it resets (${esc(at)})` : `at ${esc(at)} (checked every couple of hours)`}.</span><span class="spacer"></span><button class="btn-ghost" data-resume-now>Try now</button>`;
+  const apiProblem = /^API key:|Daily API cap/.test(S.limit.message || '');
+  el.innerHTML = `<span>⏸ <b>${apiProblem ? 'Paused — the API fallback stopped' : 'Paused — Claude usage limit reached'}.</b> Work resumes automatically ${S.limit.known ? `when it resets (${esc(at)})` : `at ${esc(at)} (checked every couple of hours)`}.<br/><small class="faint">Reason given: “${esc(String(S.limit.message || 'none').slice(0, 200))}”</small></span><span class="spacer"></span><button class="btn-ghost" data-resume-now>Try now</button>`;
   $('[data-resume-now]', el).addEventListener('click', () => api('/api/limit/resume', { method: 'POST' }).then(() => toast('Trying again…')).catch((e) => toast(e.message)));
 }
 

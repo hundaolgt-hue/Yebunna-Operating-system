@@ -11,7 +11,7 @@ import { WORKSPACE, state } from './store.js';
 import { connectionMcpServers, connectionRuntime } from './connections.js';
 import { recordUsage } from './usage.js';
 import { runSettings } from './agents.js';
-import { UsageLimitError, limited, hitLimit, parseReset, onApi, recordApiCost, apiFailed, resume, leaveApi } from './limits.js';
+import { UsageLimitError, limited, hitLimit, parseReset, onApi, recordApiCost, apiFailed, resume, leaveApi, pauseReason } from './limits.js';
 import { bus } from './bus.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
@@ -241,7 +241,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
 
   // Paused on the plan's usage limit: don't spend a run finding that out again.
-  if (limited() && !probe) throw new UsageLimitError(state.limit.kind === 'disk' ? 'Paused: the disk is almost full. Free some space and work resumes by itself.' : `Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
+  if (limited() && !probe) throw new UsageLimitError(pauseReason(), state.limit.resetAt);
   await acquire(signal, kind === 'chat' || probe);
   if (limited() && !probe) {
     releaseSlot();
