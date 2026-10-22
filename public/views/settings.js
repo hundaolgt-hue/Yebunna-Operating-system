@@ -166,7 +166,17 @@ async function loadStorage() {
       <div class="kv"><span>Workspace</span><code>${esc(r.workspace)}</code></div>
       ${r.folders.length ? `<table class="usage-table"><tr><th>Folder</th><th class="num">size</th></tr>${r.folders.map((f) => `<tr><td>${esc(f.name)}${WHAT[f.name] ? ` <span class="faint">— ${WHAT[f.name]}</span>` : ''}</td><td class="num">${size(f.size)}</td></tr>`).join('')}</table>` : ''}
       ${r.largest.length ? `<details><summary class="faint small" style="cursor:pointer;margin-top:8px">Largest files</summary><table class="usage-table">${r.largest.map((f) => `<tr><td><a class="link" href="#/files?f=${encodeURIComponent(f.path)}">${esc(f.path)}</a></td><td class="num">${size(f.size)}</td></tr>`).join('')}</table></details>` : ''}
-      <p class="faint small">To free space, delete old mission folders or large files you don't need (in File Explorer, inside the workspace folder above), or empty Windows' temp files (Settings → System → Storage → Temporary files).</p>`;
+      <div class="row-btns"><button class="btn" data-clean>🧹 Delete the team's temporary files</button></div>
+      <p class="faint small">That removes render frames, temp and cache folders (never deliverables, never a task that is running). To free more, delete old mission folders or large files you don't need (in File Explorer, inside the workspace folder above), or empty Windows' temp files (Settings → System → Storage → Temporary files). If Google Drive for desktop is set to "Mirror files", it keeps a full copy of your Drive on this disk: switch it to "Stream files" (Drive for desktop → Settings → Google Drive) to get that space back.</p>`;
+    box.querySelector('[data-clean]')?.addEventListener('click', async () => {
+      try {
+        const r2 = await api('/api/storage/clean', { method: 'POST' });
+        toast(`Freed ${size(r2.freed)}.`);
+        loadStorage();
+      } catch (e) {
+        toast(e.message);
+      }
+    });
   } catch (e) {
     box.innerHTML = `<p class="faint small">${esc(e.message)}</p>`;
   }

@@ -34,7 +34,7 @@ import './src/telegram.js';
 import { ceoChat } from './src/ceochat.js';
 import { missionFor } from './src/matching.js';
 import { seedHouseSkills } from './src/house.js';
-import { storageReport } from './src/disk.js';
+import { storageReport, cleanTemp } from './src/disk.js';
 import { referencePath, MAX_UPLOAD } from './src/references.js';
 import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resumeMeetings } from './src/meetings.js';
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
@@ -482,6 +482,10 @@ const routes = {
   },
 
   'GET /api/storage': (req, res) => send(res, 200, storageReport()),
+  'POST /api/storage/clean': (req, res) => {
+    const freed = cleanTemp();
+    send(res, 200, { freed, ...storageReport() });
+  },
   'GET /api/health': async (req, res) => {
     const tg = await import('./src/telegram.js');
     send(res, 200, { runs: runStats(), limit: state.limit, disk: state.disk, telegram: { polling: tg.isPolling(), ...tg.health } });

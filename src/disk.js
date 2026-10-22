@@ -5,6 +5,7 @@
 // carries on by itself once there is room again. Settings → Storage shows what uses space.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { state, save, saveStatus, WORKSPACE } from './store.js';
 import { bus } from './bus.js';
 import { hitLimit, resume } from './limits.js';
@@ -12,7 +13,59 @@ import { hitLimit, resume } from './limits.js';
 const GB = 1024 ** 3;
 const WARN = Number(process.env.DISK_WARN_GB || 5) * GB;
 const PAUSE = Number(process.env.DISK_PAUSE_GB || 1) * GB;
-const RESUME = PAUSE * 2; // some headroom before restarting
+const RESUME = PAUSE * 1.5; // a little headroom before restarting, so it doesn't flap
+// Working files bots leave behind that are safe to delete: render frames, temp and cache folders.
+const JUNK_DIRS = new Set(['frames', 'tmp', 'temp', '.tmp', 'cache', '.cache', '__pycache__', 'render-frames', 'renders-tmp']);
+
+/**
+ * Delete the team's temporary files (never deliverables): junk folders inside missions/, the
+ * browser tool's screenshots and leftover prompt files. Returns the bytes freed.
+ */
+export function cleanTemp() {
+  let freed = 0;
+  const size = (p) => {
+    let n = 0;
+    try {
+      const st = fs.statSync(p);
+      if (!st.isDirectory()) return st.size;
+      for (const e of fs.readdirSync(p)) n += size(path.join(p, e));
+    } catch {}
+    return n;
+  };
+  const drop = (p) => {
+    const n = size(p);
+    try {
+      fs.rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+      freed += n;
+    } catch {}
+  };
+  // Never touch the folder of a task that is running right now (e.g. frames of a render in progress).
+  const busy = Object.values(state.tasks)
+    .filter((t) => ['in_progress', 'review'].includes(t.status) && t.workDir)
+    .map((t) => path.resolve(WORKSPACE, t.workDir));
+  const walk = (dir, depth) => {
+    if (depth > 6 || busy.some((b) => path.resolve(dir).startsWith(b))) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.isSymbolicLink()) continue;
+      const full = path.join(dir, e.name);
+      if (JUNK_DIRS.has(e.name.toLowerCase())) drop(full);
+      else walk(full, depth + 1);
+    }
+  };
+  walk(path.join(WORKSPACE, 'missions'), 0);
+  if (!Object.values(state.tasks).some((t) => t.status === 'in_progress')) drop(path.join(WORKSPACE, '.browser', 'output'));
+  try {
+    for (const f of fs.readdirSync(os.tmpdir())) if (f.startsWith('yebunna-sys-')) drop(path.join(os.tmpdir(), f));
+  } catch {}
+  return freed;
+}
+let cleanedAt = 0;
 
 export function freeSpace() {
   try {
@@ -31,6 +84,15 @@ export function checkDisk() {
   const prev = state.disk?.status;
   state.disk = { ...d, status, at: new Date().toISOString(), saveError: saveStatus.error };
   if (status !== prev) bus.emit('event', { type: 'disk', disk: state.disk });
+  // Low on space: first clear the team's own temp files (at most every 30 minutes).
+  if (status !== 'ok' && Date.now() - cleanedAt > 30 * 60_000) {
+    cleanedAt = Date.now();
+    const freed = cleanTemp();
+    if (freed > 50 * 1024 ** 2) {
+      bus.emit('disk.alert', `🧹 Disk space was low, so I deleted ${(freed / GB).toFixed(1)} GB of the team's temporary files (render frames, caches).`);
+      return checkDisk();
+    }
+  }
   const gb = (d.free / GB).toFixed(1);
   if (status === 'critical' && !(state.limit?.kind === 'disk')) {
     hitLimit(`Only ${gb} GB free on the disk`, new Date(Date.now() + 7 * 864e5).toISOString(), 'disk');
