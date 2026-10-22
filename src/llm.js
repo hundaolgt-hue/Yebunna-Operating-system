@@ -11,7 +11,8 @@ import { WORKSPACE, state } from './store.js';
 import { connectionMcpServers, connectionRuntime } from './connections.js';
 import { recordUsage } from './usage.js';
 import { runSettings } from './agents.js';
-import { UsageLimitError, limited, hitLimit, parseReset, onApi, recordApiCost, apiFailed } from './limits.js';
+import { UsageLimitError, limited, hitLimit, parseReset, onApi, recordApiCost, apiFailed, resume, leaveApi } from './limits.js';
+import { bus } from './bus.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -192,6 +193,8 @@ function releaseSlot() {
 // Claude Code's plan-limit notices: "You've hit your session limit · resets 3pm", "…weekly limit",
 // "Claude AI usage limit reached|1760014800", "5-hour limit reached ∙ resets 9am", "out of extra usage".
 export const LIMIT_TEXT = /you'?ve (hit|reached) your (session |weekly |daily |monthly |usage |opus |sonnet )?limit|usage limit reached|claude ai usage limit|\d+-hour limit reached|(session|weekly) limit reached|out of (extra )?usage/i;
+// The same notice as a whole reply (it starts with it).
+export const LIMIT_NOTICE = new RegExp(`^\\W*(${LIMIT_TEXT.source})`, 'i');
 
 /** Thrown when a run used up its step budget; carries whatever it had written. */
 export class OutOfStepsError extends Error {
@@ -227,9 +230,9 @@ export function pick(kind, model, effort, maxTurns, size = 'medium', agentId) {
   return { model: r.model || MODEL, effort: r.effort || effort, maxTurns: budget };
 }
 
-export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo, onStart }) {
+export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo, onStart, probe = false }) {
   ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size, agentId));
-  const api = onApi(); // this run is billed to the API key
+  const api = onApi() && !probe; // this run is billed to the API key (a probe always tests the plan)
   if (api && state.apiFallback?.noOpus && /opus/i.test(model || '')) model = 'sonnet'; // keep API costs down
   if (demoMode) {
     onStart?.();
@@ -238,9 +241,9 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   }
 
   // Paused on the plan's usage limit: don't spend a run finding that out again.
-  if (limited()) throw new UsageLimitError(state.limit.kind === 'disk' ? 'Paused: the disk is almost full. Free some space and work resumes by itself.' : `Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
-  await acquire(signal, kind === 'chat');
-  if (limited()) {
+  if (limited() && !probe) throw new UsageLimitError(state.limit.kind === 'disk' ? 'Paused: the disk is almost full. Free some space and work resumes by itself.' : `Paused until your Claude usage limit resets (${new Date(state.limit.resetAt).toLocaleString()}).`, state.limit.resetAt);
+  await acquire(signal, kind === 'chat' || probe);
+  if (limited() && !probe) {
     releaseSlot();
     throw new UsageLimitError('Paused until your Claude usage limit resets.', state.limit.resetAt);
   }
@@ -351,9 +354,10 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   if (signal?.aborted) throw new Error('aborted');
   if (timedOut) throw new Error(`timed out after ${runLimit / 60_000} minutes`);
   if (result?.subtype === 'error_max_turns') throw new OutOfStepsError(lastText);
-  // Sometimes the limit notice comes back as the "answer" instead of an error.
+  // Sometimes the limit notice comes back as the "answer" instead of an error. Only a reply that
+  // IS the notice counts — never a bot's answer that merely mentions a limit.
   const answer = String(result?.result || lastText).trim();
-  if (!result?.is_error && answer.length < 400 && LIMIT_TEXT.test(answer)) {
+  if (!result?.is_error && answer.length < 200 && LIMIT_NOTICE.test(answer)) {
     result = { ...result, is_error: true, result: result?.result || lastText };
   }
   if (result?.is_error || (code !== 0 && !result)) {
@@ -366,8 +370,9 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     if (/not logged in|please run \/login|invalid api key|authentication_error|oauth token|\/login/i.test(why)) {
       throw new Error('Claude Code is not logged in. In cmd run `claude`, type /login, choose your Claude account (Pro/Max subscription), finish in the browser, type /exit, then try again.');
     }
-    const all = `${why}\n${lastText}\n${stderr}`;
-    if (LIMIT_TEXT.test(all) || /limit will reset|resets? \d/i.test(all)) {
+    // Claude Code's own error text only (not what the bot wrote).
+    const all = `${why}\n${stderr}`;
+    if (LIMIT_TEXT.test(all)) {
       const resetAt = parseReset(all);
       hitLimit(why, resetAt);
       throw new UsageLimitError(`Your Claude usage limit was reached — work pauses and resumes automatically${resetAt ? ` at ${new Date(resetAt).toLocaleString()}` : ''}.`, resetAt);
@@ -397,6 +402,32 @@ export async function complete(opts, onEvent) {
   }
   return text;
 }
+
+// ---- is the plan really limited? ------------------------------------------------------
+// A few minutes after a pause (and at start while paused), one tiny run checks the plan. If it
+// goes through, the pause was not real and the team resumes; if it hits the limit, the pause stays.
+// The same check ends an API-fallback period early when the plan works again.
+export async function probeLimit() {
+  if (demoMode) return;
+  const usagePause = state.limit?.kind === 'usage';
+  if (!usagePause && !onApi()) return;
+  try {
+    await complete({ system: 'Reply with the word OK only.', messages: [{ role: 'user', content: 'OK' }], model: 'haiku', effort: 'low', maxTurns: 1, tools: [], kind: 'probe', probe: true });
+  } catch {
+    return; // still limited (or offline): keep the pause or the API period
+  }
+  if (usagePause && state.limit?.kind === 'usage') resume('the plan is not limited (checked)');
+  if (onApi()) leaveApi('the plan works again (checked)');
+}
+let probeTimer = null;
+const probeSoon = (ms) => {
+  clearTimeout(probeTimer);
+  probeTimer = setTimeout(() => probeLimit().catch(() => {}), ms);
+  probeTimer.unref?.();
+};
+bus.on('limit.hit', () => probeSoon(3 * 60_000));
+bus.on('api.on', () => probeSoon(10 * 60_000));
+setTimeout(() => (state.limit?.kind === 'usage' || state.apiMode) && probeSoon(1000), 20_000).unref?.();
 
 /** Pull a JSON object out of a model reply (tolerates code fences, chatter and stray braces). */
 export function extractJson(text) {

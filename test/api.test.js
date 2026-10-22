@@ -87,3 +87,9 @@ test("Vega always opens every motion skill and studies the Drive 'sample videos'
   assert.match(p, new RegExp(`SAMPLE VIDEOS.*${path.join('Rapha', 'Sample Videos').replace(/\\/g, '\\\\')}`));
   assert.match(p, /run_in_background/);
 });
+
+test('a bot that only mentions the limit does not pause the team', async () => {
+  const { LIMIT_NOTICE } = await import('../src/llm.js');
+  assert.ok(LIMIT_NOTICE.test("You've hit your session limit · resets 3pm"));
+  for (const t of ["We're paused on your Claude usage limit, so I saved your message.", 'Noted. Last time the usage limit reached its cap at 3pm.', 'The video resets 3 times per loop.']) assert.equal(LIMIT_NOTICE.test(t), false, t);
+});

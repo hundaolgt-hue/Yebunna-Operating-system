@@ -63,7 +63,10 @@ bus.on('limit.reset', async () => {
 });
 
 /** The conversation the CEO sees: the last messages, whatever missions were started in between. */
-const recentContext = (history) => history.slice(-10);
+// The app's own notices (paused, couldn't reply) are not part of the conversation: a model that
+// reads them tends to repeat them.
+const NOTICE = /^\W*(we're paused on your claude usage limit|i couldn't reply|⚠️ i couldn't reply)/i; // notices saved before they were marked
+const recentContext = (history) => history.filter((h) => !h.notice && !(h.role === 'assistant' && NOTICE.test(h.content || ''))).slice(-10);
 
 /**
  * One turn of the founder talking to the CEO. Returns the CEO's reply (plain text for a phone),
@@ -93,7 +96,7 @@ async function ceoTurn(text, { via = 'telegram', focus = null, attachments = [],
   const later = () => {
     (state.ceoPending ||= []).push({ text, via, focus });
     const msg = `⏸ We're paused on your Claude usage limit${state.limit?.resetAt ? ` until ${new Date(state.limit.resetAt).toLocaleString()}` : ''}. I've kept your message and will act on it as soon as the limit resets (/resume to try now).`;
-    history.push({ role: 'assistant', content: msg, via, at: now() });
+    history.push({ role: 'assistant', content: msg, via, at: now(), notice: true });
     save();
     return msg;
   };
@@ -152,7 +155,7 @@ CLASSIFY THE MESSAGE FIRST, then act. To act, end your reply with exactly one bl
     if (isLimitError(e) && onApi() && !replay) return ceoTurn(text, { via, focus, attachments: [], replay: true });
     if (isLimitError(e)) return later();
     const msg = `⚠️ I couldn't reply: ${e.message}`;
-    history.push({ role: 'assistant', content: msg, via, at: now() });
+    history.push({ role: 'assistant', content: msg, via, at: now(), notice: true });
     save();
     return msg;
   }
