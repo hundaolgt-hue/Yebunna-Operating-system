@@ -44,7 +44,7 @@ const focusTask = () => (focus()?.taskId && state.tasks[focus().taskId]) || null
 function missionLine(m, full) {
   const tasks = tasksOf(m);
   const head = `- mission ${m.id} — product: ${m.product || m.title} [${m.status}]`;
-  if (!full) return `${head}: ${tasks.filter((t) => t.status === 'done').length}/${tasks.length} tasks done`;
+  if (!full) return `${head}: ${tasks.map((t, i) => `T${i + 1} ${clip(t.title, 50)} [${t.status}] (${t.id})`).join('; ') || 'no tasks'}`;
   const said = m.thread.filter((i) => i.role === 'user').slice(-3).map((i) => clip(i.text, 120));
   return `${head}
   goal: ${clip(m.goal, 240)}${said.length > 1 ? `\n  founder's latest instructions: ${said.slice(1).join(' | ')}` : ''}
@@ -234,6 +234,21 @@ async function ceoTurn(text, { via = 'telegram', focus: replyFocus = null, attac
   const current = focusMission();
   const done = [];
 
+  // The CEO asked "do you mean T11?" and the founder answers: do it, no second guess.
+  const pending = state.ceoPendingEdit;
+  if (pending && Date.now() - Date.parse(pending.at) < 30 * 60_000) {
+    state.ceoPendingEdit = null;
+    const { isYes } = await import('./telegram.js');
+    const t = state.tasks[pending.taskId];
+    const yes = isYes(text) || new RegExp(`^\\W*(yes|ok|okay|sure|do it|go)\\b.*\\bT?${pending.tn}\\b`, 'i').test(text) || /^\W*(yes|ok|okay|sure|do it|go ahead)\W*$/i.test(text);
+    if (t && yes) {
+      amendTask(t, pending.text);
+      logAction({ type: 'edit', missionId: t.missionId, taskId: t.id, label: `changed “${t.title}”` });
+      setFocus(t.missionId, t.id);
+      return finish(history, `✏️ Updated “${t.title}” with your change. ${getAgent(t.agentId)?.name || 'The bot'} is on it.`, via, ['edit'], null);
+    }
+  }
+
   // "Stop everything" needs no thinking.
   if (STOP_ALL.test(text)) {
     let n = 0;
@@ -347,11 +362,16 @@ RULES
         // Sanity: a finished task the founder didn't name is not redone on a guess.
         // Named = the message shares the task's distinctive words (its title/deliverable), its file name, or its id.
         const named = (x) => overlap(`${x.title} ${x.deliverable || ''}`, text) >= 0.34 || (x.file && text.toLowerCase().includes(x.file.split('/').pop().toLowerCase())) || text.includes(x.id);
-        if (t && ['done', 'approval'].includes(t.status) && !named(t) && t !== focusTask()) {
-          const better = (mission ? tasksOf(mission) : Object.values(state.tasks)).filter(named).sort((x, y) => (y.status === 'done') - (x.status === 'done'))[0];
+        // A finished task outside the current focus that the founder didn't name is a guess:
+        // take a named one instead, or ask (and remember the question, so "yes" settles it).
+        if (t && ['done', 'approval'].includes(t.status) && !named(t) && t !== focusTask() && t.missionId !== current?.id) {
+          const better = Object.values(state.tasks).filter(named).sort((x, y) => (y.status === 'done') - (x.status === 'done'))[0];
           if (better) t = better;
-          else if (t.status === 'done' && mission && tasksOf(mission).some((x) => x !== t && !['done', 'failed'].includes(x.status))) t = tasksOf(mission).find((x) => !['done', 'failed'].includes(x.status));
-          else throw new Error(`I think you mean “${t.title}” (T${tasksOf(state.missions[t.missionId]).indexOf(t) + 1}), but I'm not sure — say "yes, T${tasksOf(state.missions[t.missionId]).indexOf(t) + 1}" to redo it with this change.`);
+          else {
+            const tn = tasksOf(state.missions[t.missionId]).indexOf(t) + 1;
+            state.ceoPendingEdit = { taskId: t.id, tn, text: String(a.text), at: now() };
+            throw new Error(`I think you mean “${t.title}” (T${tn}), but I'm not sure — say "yes" to redo it with this change.`);
+          }
         }
         if (t) {
           amendTask(t, String(a.text));
@@ -403,7 +423,10 @@ RULES
     const mentioned = missionFor(text);
     if (mentioned && mentioned !== current) setFocus(mentioned.id);
   }
-  const clean = reply.replace(/```actions[\s\S]*?```/g, '').trim();
+  let clean = reply.replace(/```actions[\s\S]*?```/g, '').trim();
+  // Work that failed must not read as done: when every work action failed, drop the narration.
+  const tried = actions.filter((a) => ['edit', 'add', 'mission', 'stop'].includes(a.type)).length;
+  if (tried && workDone && done.filter((d) => d.startsWith('⚠️')).length >= workDone) clean = '';
   const result = finish(history, [clean, ...done].filter(Boolean).join('\n\n') || 'OK.', via, done, missionId);
   compact(history).catch(() => {});
   return result;
@@ -427,7 +450,8 @@ function demoActions(text, current, correcting, replied) {
   if (correcting) return [{ type: 'undo' }, { type: 'rule', rule: 'dont', text: 'Start work the founder did not ask for.' }];
   if (/^\W*stop\b/i.test(text)) return [{ type: 'stop' }];
   const words = text.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
-  const pool = current ? tasksOf(current) : Object.values(state.tasks).filter((t) => ['running', 'planning', 'awaiting_approval', 'done'].includes(state.missions[t.missionId]?.status));
+  const all = Object.values(state.tasks).filter((t) => ['running', 'planning', 'awaiting_approval', 'done'].includes(state.missions[t.missionId]?.status));
+  const pool = current ? [...tasksOf(current), ...all.filter((t) => t.missionId !== current.id)] : all; // the focus first, then everything
   const hit = /^(change|edit|update|make it|fix|instead|redo)\b/i.test(text) && pool.find((t) => t.status !== 'failed' && words.some((w) => t.title.toLowerCase().includes(w)));
   if (hit) return [{ type: 'edit', task: hit.id, text }];
   if (/\b(new|another|next|different)\s+(product|template|idea)\b/i.test(text)) return [{ type: 'mission', goal: text, deadline_hours: 24 }];

@@ -84,3 +84,24 @@ test('Fresh start archives the conversation and keeps rules and missions', () =>
   assert.equal(listRules().length, rules);
   assert.ok(state.missions[m.id]);
 });
+
+test('when the CEO asks "do you mean T1?", a plain "yes" settles it — no second question', async () => {
+  const a = createMissionWithTasks({ goal: 'MachineRent Pro launch', deadline: inHours(4), specs: [spec('support', 'Write the MachineRent Pro tutorial, thank-you and read-me-first PDFs')] });
+  a.product = 'MachineRent Pro';
+  await until(() => a.status === 'done', 'mission A');
+  const b = createMissionWithTasks({ goal: 'SiteCalc Villa launch', deadline: inHours(4), specs: [spec('marketing', 'Write SiteCalc ad hooks')] });
+  b.product = 'SiteCalc Villa';
+  await until(() => b.status === 'done', 'mission B');
+  await ceoChat('SiteCalc Villa: how is it going?', { via: 'app' }); // focus moves to B
+  assert.equal(state.ceoFocus?.missionId, b.id);
+  const t = missionTasks(a)[0];
+  const ask = await ceoChat('change the read me pdf: put 0912736754 as the support number', { via: 'app' });
+  assert.match(ask, /I think you mean “Write the MachineRent Pro tutorial/);
+  assert.doesNotMatch(ask, /On it\./, 'no claim that the work was sent');
+  assert.equal(t.status, 'done', 'nothing changed yet');
+  const yes = await ceoChat('yes', { via: 'app' });
+  assert.match(yes, /Updated “Write the MachineRent Pro tutorial/);
+  assert.match(t.brief, /0912736754/);
+  await until(() => a.status === 'done' && t.status === 'done', 'the redo');
+  assert.equal(state.ceoFocus?.taskId, t.id);
+});
