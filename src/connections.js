@@ -48,8 +48,8 @@ export const SERVICES = {
     ],
     steps: [
       'Open business.facebook.com/settings → Users → System users → Add (role: Admin).',
-      'Click "Assign assets" and give the system user your ad account and Page.',
-      'Click "Generate new token", choose your app (create one at developers.facebook.com if needed) and tick: ads_read, ads_management, business_management, pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic, instagram_content_publish.',
+      'Click "Assign assets" and give the SYSTEM USER (not yourself) your ad account (Manage campaigns) and Page. Do this BEFORE generating the token: a token never gains access given after it was made.',
+      'Click "Generate new token", choose your app (create one at developers.facebook.com if needed; its type must allow the Marketing API) and tick: ads_read, ads_management, business_management, pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic, instagram_content_publish.',
       'Copy the token and paste it below with your ad account ID (Ads Manager → account dropdown, starts with act_).',
     ],
     link: 'https://business.facebook.com/settings/system-users',
@@ -217,11 +217,29 @@ export async function testConnection(id) {
         const token = `access_token=${encodeURIComponent(cfg.token)}`;
         const me = await metaCall(`me?fields=id,name&${token}`);
         account = me.name || me.id;
+        // What this token can do, and which ad accounts it can see: the usual cause of Meta's
+        // error #200 is a token generated before the ad account was assigned, or without the
+        // ads_management / ads_read boxes ticked.
+        const scopes = await metaCall(`me/permissions?${token}`).then((r) => (r.data || []).filter((x) => x.status === 'granted').map((x) => x.permission)).catch(() => null);
+        const visible = await metaCall(`me/adaccounts?fields=id,name&limit=100&${token}`).then((r) => r.data || []).catch(() => null);
         if (cfg.adAccountId) {
           const acct = cfg.adAccountId.startsWith('act_') ? cfg.adAccountId : `act_${cfg.adAccountId}`;
-          const a = await metaCall(`${acct}?fields=name,account_status,currency&${token}`);
-          account += ` · ad account “${a.name}” (${a.currency})`;
+          try {
+            const a = await metaCall(`${acct}?fields=name,account_status,currency&${token}`);
+            account += ` · ad account “${a.name}” (${a.currency})`;
+          } catch (e) {
+            if (!/#200|ads_management|ads_read|permission/i.test(e.message)) throw e;
+            const missing = scopes && !scopes.includes('ads_management') && !scopes.includes('ads_read');
+            const seen = visible?.map((x) => x.id) || [];
+            const hint = missing
+              ? `This token has no ads permission at all (it has: ${scopes.join(', ') || 'none'}). Generate a NEW token for the system user and tick ads_management and ads_read before clicking Generate.`
+              : visible && !seen.includes(acct)
+                ? `The token has ads permission, but can't see ${acct}. It can see: ${visible.map((x) => `${x.id} (${x.name})`).join(', ') || 'no ad accounts'}. In Business Settings → Users → System users, pick this system user → Assign assets → Ad accounts → add ${acct} with Manage campaigns — then generate a NEW token (an old token never gains access given later).`
+                : `Generate a NEW token for the system user (after assigning the ad account to it) with ads_management and ads_read ticked, and paste it here. Access given after a token was made does not reach that token.`;
+            throw new Error(`${e.message} ${hint}`);
+          }
         }
+        if (scopes && !scopes.includes('ads_management') && !scopes.includes('ads_read')) throw new Error(`The token works but has no ads permission (it has: ${scopes.join(', ') || 'none'}). Generate a new one with ads_management and ads_read ticked.`);
         account += ` · API ${metaVersion}`;
       }
     }
