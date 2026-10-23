@@ -103,3 +103,28 @@ test('several changes to a running task are all kept', async () => {
   assert.match(t.brief, /dark background/);
   assert.match(t.brief, /1,500 ብር/);
 });
+
+test('a follow-up with a long URL edits the task the CEO chose; "T2" answers "which task?"', async () => {
+  await until(() => Object.values(state.missions).every((x) => ['done', 'cancelled', 'failed'].includes(x.status)), 'earlier missions to finish', 240_000);
+  const m = createMissionWithTasks({
+    goal: 'MachineRent Pro launch',
+    deadline: inHours(4),
+    specs: [
+      { agent: 'research', title: 'Competitor prices', brief: 'prices', deliverable: 'prices.md', due_in_hours: 1, size: 'small' },
+      { agent: 'landing', title: 'Build the MachineRent Pro landing page on Vercel', brief: 'page', deliverable: 'preview URL', due_in_hours: 2, size: 'small' },
+    ],
+  });
+  await until(() => m.status === 'done', 'the mission');
+  const [prices, page] = missionTasks(m);
+  const { mentionsTask } = await import('../src/orchestrator.js');
+  const url = 'add this link in the landing page for the checkout https://ye-buna.com/hundaolgirma?ref=product_detail&product=6adafcc550de0_hundaolgirma and make the price 1499';
+  assert.equal(mentionsTask(url, page, m), true, 'a long URL does not hide the task name');
+  assert.equal(mentionsTask('on T2 change the price', page, m), true);
+  assert.equal(mentionsTask(url, prices, m), false);
+  // The planner asked "which task?" and the founder answers with the T-number.
+  m.pendingChange = { text: url, at: new Date().toISOString() };
+  sendToMission(m, { text: 'T2', mode: 'delegate' });
+  assert.match(page.brief, /1499/);
+  assert.equal(prices.status, 'done', 'the other task is untouched');
+  await until(() => m.status === 'done' && page.status === 'done', 'the redo');
+});

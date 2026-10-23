@@ -21,7 +21,7 @@ import { connectedServices } from './connections.js';
 import { limited, isLimitError } from './limits.js';
 import { notifyFounder } from './telegram.js';
 import { publishTask, publishReport } from './drivesync.js';
-import { resolveTask, duplicateTask, overlap, listsSeveral } from './matching.js';
+import { resolveTask, duplicateTask, overlap, listsSeveral, words } from './matching.js';
 
 export { bus };
 
@@ -240,6 +240,18 @@ function taskBriefFields(s) {
  */
 export function sendToMission(m, { text, mode }) {
   addThread(m, { role: 'user', kind: 'text', text, mode });
+  // "T6" (or a task id) in answer to "which task?": apply the remembered change, no planning.
+  const pending = m.pendingChange;
+  if (pending && mode !== 'ask' && Date.now() - Date.parse(pending.at) < 30 * 60_000) {
+    const t = String(text).trim().length <= 40 && resolveTask(text.trim(), m);
+    if (t) {
+      m.pendingChange = null;
+      amendTask(t, pending.text, { quiet: true });
+      addThread(m, { role: 'ceo', kind: 'review', text: `✏️ Applied to **${t.title}**: ${pending.text}` });
+      return;
+    }
+  }
+  m.pendingChange = null; // a new instruction replaces the old question
   if (m.status === 'planning' || m.status === 'reporting') {
     // The CEO is mid-plan or mid-report: queue it and handle it right after.
     (m.queue ||= []).push({ text, mode, at: now() });
@@ -423,6 +435,16 @@ function addTasks(m, item, specs) {
   return dropped;
 }
 
+/** Does the founder's text name this task: its T-number, its id, or the words of its title? */
+export function mentionsTask(text, t, m) {
+  const tn = missionTasks(m).indexOf(t) + 1;
+  if (new RegExp(`\\bT${tn}\\b`, 'i').test(text) || text.includes(t.id)) return true;
+  if (t.file && text.toLowerCase().includes(t.file.split('/').pop().toLowerCase())) return true;
+  const title = [...words(t.title)];
+  const got = title.filter((w) => words(text).has(w)).length;
+  return got >= 2 || (title.length <= 3 && got >= 1);
+}
+
 /** Each task has its own work folder: missions/<mission>/<NN>-<task>/ (all its files, nothing else). */
 const taskWorkDir = (m, t) => `${m.folder}/${String(m.taskIds.indexOf(t.id) + 1).padStart(2, '0')}-${slugify(t.title, 32)}`;
 
@@ -530,11 +552,12 @@ Reply with ONLY JSON:
         parsed.tasks = parsed.tasks.filter((spec) => {
           const dup = duplicateTask(m, spec, resolveAgent(spec.agent)?.id);
           if (!dup) return true;
-          if (overlap(instruction, `${dup.title} ${dup.deliverable || ''}`) >= 0.25) parsed.edits.push({ t: dup, change: [spec.brief, spec.deliverable && `Deliverable: ${spec.deliverable}`].filter(Boolean).join('\n') || instruction });
+          if (mentionsTask(instruction, dup, m) || parsed.tasks.length === 1) parsed.edits.push({ t: dup, change: [spec.brief, spec.deliverable && `Deliverable: ${spec.deliverable}`].filter(Boolean).join('\n') || instruction });
           return false;
         });
-        // An edit to a finished task that the founder didn't mention is a guess: drop it.
-        parsed.edits = parsed.edits.filter((e) => !['done', 'approval'].includes(e.t.status) || overlap(instruction, `${e.t.title} ${e.t.deliverable || ''}`) >= 0.2 || instruction.includes(e.t.id));
+        // One instruction → one change: the CEO's single choice is trusted. When it returns several,
+        // finished tasks the founder didn't name are side effects and are dropped.
+        if (parsed.edits.length + parsed.tasks.length > 1) parsed.edits = parsed.edits.filter((e) => !['done', 'approval'].includes(e.t.status) || mentionsTask(instruction, e.t, m));
         // One message = one change, unless the founder listed several things.
         const wanted = listsSeveral(instruction) ? 3 : 1;
         const changes = [...parsed.edits.map((e) => ({ edit: e })), ...parsed.tasks.map((t) => ({ task: t }))].slice(0, wanted);
@@ -571,8 +594,10 @@ Reply with ONLY JSON:
     // Nothing to change or add: say so and ask, instead of failing the mission. The mission
     // goes back to exactly where it was (a finished mission is not reported again).
     item.kind = 'review';
-    item.text = `${String(parsed.summary || '').trim()}\n\nI couldn't tell which task this changes. Which one should it go to (e.g. T2)?`.trim();
-    notifyFounder(`❓ “${m.title}”: I couldn't tell which task your message changes. Which one (e.g. T2)?`, { type: 'mission', id: m.id });
+    m.pendingChange = { text: instruction, at: now() };
+    const list = missionTasks(m).map((t, i) => `T${i + 1} ${t.title}`).join(' · ');
+    item.text = `I couldn't tell which task this changes. Reply with the task (e.g. "T2") and I'll apply it: ${list}`;
+    notifyFounder(`❓ “${m.title}”: I couldn't tell which task your message changes. Reply with the task: ${list}`, { type: 'mission', id: m.id });
     m.status = before === 'planning' ? 'running' : before;
     emitMission(m);
     schedule(m);

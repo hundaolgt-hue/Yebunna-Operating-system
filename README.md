@@ -50,7 +50,7 @@ The CEO chat (in the app and on Telegram) is one conversation, built so it can't
 
 The CEO sorts every message (in the app, on Telegram, or in a mission's box) before acting on it:
 - **A change, correction or comment on assigned work** edits that task. It never creates a new task or mission. A queued task gets the change in its brief. A running task stops and restarts with the change. A finished task is redone with the change.
-- **New work for the same product** is added to that product's mission. A follow-up produces one change (or up to three if you listed several); finished tasks you didn't mention are never touched.
+- **New work for the same product** is added to that product's mission. A follow-up produces one change (or up to three if you listed several); when the CEO picks one task for your one instruction, that choice is trusted; extra changes to finished tasks you didn't name (by T-number, title or file) are dropped. If the CEO can't place a change, it lists the tasks and asks; replying "T6" applies the change you already wrote.
 - **A different product** becomes a new mission.
 - **Questions and status checks** just get an answer.
 
