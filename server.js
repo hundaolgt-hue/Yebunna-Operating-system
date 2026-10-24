@@ -40,7 +40,7 @@ import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resu
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
 import { listPacks, installPack, installAll, refreshPackOwners } from './src/skillpacks.js';
 import { installSkillArchive, importClaudeSkills, initCustomSkills } from './src/skillimport.js';
-import { listConnections, saveConnection, removeConnection, testConnection } from './src/connections.js';
+import { listConnections, saveConnection, removeConnection, testConnection, seedTools } from './src/connections.js';
 import { logActivity, toolTracker } from './src/activity.js';
 import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
 
@@ -734,6 +734,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 seedHouseSkills();
+seedTools();
 refreshPackOwners();
 initCustomSkills();
 resumeAll();

@@ -5,7 +5,20 @@
 // and instructions — and nothing for connections it isn't allowed to use.
 import fs from 'node:fs';
 import path from 'node:path';
-import { state, save, now } from './store.js';
+import { fileURLToPath } from 'node:url';
+import { state, save, now, WORKSPACE } from './store.js';
+
+/** Copy the bots' helper scripts (tools/) into the workspace as .tools/, so every run can use them. */
+export function seedTools() {
+  const src = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'tools');
+  const dst = path.join(WORKSPACE, '.tools');
+  try {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const f of fs.readdirSync(src)) fs.copyFileSync(path.join(src, f), path.join(dst, f));
+  } catch (e) {
+    console.error('Could not copy the bot tools:', e.message);
+  }
+}
 
 export const SERVICES = {
   github: {
@@ -366,7 +379,14 @@ export function connectionPrompt(agentId) {
     parts.push(`- Vercel: use the Vercel CLI through the terminal (\`npx vercel@latest …\`). The token is already in the VERCEL_TOKEN environment variable — never pass it with --token or print it.${conns().vercel.config?.team ? ` Use --scope ${conns().vercel.config.team}.` : ''} Deploy preview deployments by default; deploy to production (--prod), change domains or environment variables only when the task explicitly says so. Report the deployment URL.`);
   }
   if (allowed('meta', agentId)) {
-    parts.push(`- Meta (Facebook & Instagram): call the Graph / Marketing API from Python or curl in the terminal, always with the version in the URL: https://graph.facebook.com/${metaVersion}/… (also in the META_API_VERSION environment variable). Never call it without a version: Meta then uses an old default that the Ads API rejects (error #2635). If Meta says a newer version is required, use the one it names. The token is in META_ACCESS_TOKEN (never print it or save it to a file); the ad account is META_AD_ACCOUNT_ID${conns().meta.config?.pageId ? ', the Page is META_PAGE_ID' : ''}${conns().meta.config?.igUserId ? ', the Instagram account is META_IG_USER_ID' : ''}. Reading insights is always fine. Create campaigns, ad sets and ads with status PAUSED. Never activate anything that spends money, change budgets or bids, publish posts, or reply to people unless the task explicitly says so.`);
+    const acct = cfg('meta').adAccountId ? (cfg('meta').adAccountId.startsWith('act_') ? cfg('meta').adAccountId : `act_${cfg('meta').adAccountId}`) : 'act_<id>';
+    parts.push(`- Meta (Facebook & Instagram): the Marketing API, through the helper in the terminal: \`python .tools/meta_api.py get|post|delete <path> key=value …\` (run it with no arguments for examples). It reads the token from META_ACCESS_TOKEN (never print it or save it to a file), the version from META_API_VERSION and follows pagination. The ad account is ${acct}${conns().meta.config?.pageId ? `, the Page ${conns().meta.config.pageId}` : ''}${conns().meta.config?.igUserId ? `, the Instagram account ${conns().meta.config.igUserId}` : ''}.
+  The "Meta Ads MCP tools" that skills written for claude.ai name (ads_get_ad_entities, ads_create_campaign, ads_create_ad_set, ads_create_creative, ads_create_ad, ads_update_entity, ads_get_ad_preview, ads_creative_upload_media, ads_insights_*) DO NOT EXIST here and are never a reason to be blocked: do the same thing with the helper —
+  ads_get_ad_entities → get ${acct}/campaigns (or /adsets, /ads) fields=id,name,status,effective_status,daily_budget,objective · insights → get ${acct}/insights fields=spend,impressions,clicks,ctr,cpc,actions,cost_per_action_type level=ad date_preset=last_7d
+  ads_create_campaign → post ${acct}/campaigns name=… objective=OUTCOME_SALES status=PAUSED special_ad_categories=[] · ads_create_ad_set → post ${acct}/adsets name=… campaign_id=… daily_budget=<cents> billing_event=IMPRESSIONS optimization_goal=OFFSITE_CONVERSIONS promoted_object={"pixel_id":"…","custom_event_type":"PURCHASE"} targeting={…} status=PAUSED
+  ads_creative_upload_media → post ${acct}/adimages --file x.png (or /advideos --file x.mp4) · ads_create_creative → post ${acct}/adcreatives name=… object_story_spec={…} · ads_create_ad → post ${acct}/ads name=… adset_id=… creative={"creative_id":"…"} status=PAUSED
+  ads_update_entity → post <object id> field=value · ads_get_ad_preview → get <ad id>/previews ad_format=MOBILE_FEED_STANDARD · ads_get_ad_images/videos → get ${acct}/adimages (or /advideos).
+  The skill's "Projects tool" files (claude/…md) are this mission's workspace files instead. Reading insights is always fine. Create campaigns, ad sets and ads with status PAUSED. Never activate anything that spends money, change budgets or bids, publish posts, or reply to people unless the task explicitly says so.`);
   }
   if (allowed('higgsfield', agentId)) {
     parts.push(`- Higgsfield: use the Higgsfield MCP tools (mcp__higgsfield__*) to generate images and videos. Every generation spends the founder's Higgsfield credits: check the balance first, prefer a cheaper model or a still image when it does the job, generate only the variants the task needs, and stop and report if the credits would not cover the work. Never buy credits, change plans or subscriptions, publish to TikTok or other platforms, or enter contests unless the task explicitly says so. Download every finished asset into the mission's workspace folder and list its file path and Higgsfield URL in your deliverable.`);
