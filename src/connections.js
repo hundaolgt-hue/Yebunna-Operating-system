@@ -295,7 +295,14 @@ export function connectedServices(agentId) {
 
 /** Extra tools a bot gets from its connections. */
 export function connectionTools(agentId) {
-  return [...(allowed('github', agentId) ? ['mcp__github'] : []), ...(allowed('higgsfield', agentId) ? ['mcp__higgsfield'] : [])];
+  return [
+    ...(allowed('github', agentId) ? ['mcp__github'] : []),
+    ...(allowed('higgsfield', agentId) ? ['mcp__higgsfield'] : []),
+    // The founder's claude.ai Meta Ads connector, when Claude Code on this PC is signed in with
+    // that account: its tools appear in bot runs as mcp__claude_ai_Meta_Ads__* and must be
+    // allowed here (the "always allow" on claude.ai never reaches these runs).
+    ...(allowed('meta', agentId) ? ['mcp__claude_ai_Meta_Ads'] : []),
+  ];
 }
 
 /** MCP server definitions for connection tools (secrets come from env, never written to disk). */
@@ -381,7 +388,7 @@ export function connectionPrompt(agentId) {
   if (allowed('meta', agentId)) {
     const acct = cfg('meta').adAccountId ? (cfg('meta').adAccountId.startsWith('act_') ? cfg('meta').adAccountId : `act_${cfg('meta').adAccountId}`) : 'act_<id>';
     parts.push(`- Meta (Facebook & Instagram): the Marketing API, through the helper in the terminal: \`python .tools/meta_api.py get|post|delete <path> key=value …\` (run it with no arguments for examples). It reads the token from META_ACCESS_TOKEN (never print it or save it to a file), the version from META_API_VERSION and follows pagination. The ad account is ${acct}${conns().meta.config?.pageId ? `, the Page ${conns().meta.config.pageId}` : ''}${conns().meta.config?.igUserId ? `, the Instagram account ${conns().meta.config.igUserId}` : ''}.
-  The "Meta Ads MCP tools" that skills written for claude.ai name (ads_get_ad_entities, ads_create_campaign, ads_create_ad_set, ads_create_creative, ads_create_ad, ads_update_entity, ads_get_ad_preview, ads_creative_upload_media, ads_insights_*) DO NOT EXIST here and are never a reason to be blocked: do the same thing with the helper —
+  If this run has the Meta Ads MCP tools (mcp__claude_ai_Meta_Ads__ads_get_ad_entities, ads_create_campaign, …), use them: they are allowed. If they are not present, that is never a reason to be blocked: do the same thing with the helper —
   ads_get_ad_entities → get ${acct}/campaigns (or /adsets, /ads) fields=id,name,status,effective_status,daily_budget,objective · insights → get ${acct}/insights fields=spend,impressions,clicks,ctr,cpc,actions,cost_per_action_type level=ad date_preset=last_7d
   ads_create_campaign → post ${acct}/campaigns name=… objective=OUTCOME_SALES status=PAUSED special_ad_categories=[] · ads_create_ad_set → post ${acct}/adsets name=… campaign_id=… daily_budget=<cents> billing_event=IMPRESSIONS optimization_goal=OFFSITE_CONVERSIONS promoted_object={"pixel_id":"…","custom_event_type":"PURCHASE"} targeting={…} status=PAUSED
   ads_creative_upload_media → post ${acct}/adimages --file x.png (or /advideos --file x.mp4) · ads_create_creative → post ${acct}/adcreatives name=… object_story_spec={…} · ads_create_ad → post ${acct}/ads name=… adset_id=… creative={"creative_id":"…"} status=PAUSED

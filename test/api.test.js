@@ -93,3 +93,10 @@ test('a bot that only mentions the limit does not pause the team', async () => {
   assert.ok(LIMIT_NOTICE.test("You've hit your session limit · resets 3pm"));
   for (const t of ["We're paused on your Claude usage limit, so I saved your message.", 'Noted. Last time the usage limit reached its cap at 3pm.', 'The video resets 3 times per loop.']) assert.equal(LIMIT_NOTICE.test(t), false, t);
 });
+
+test("the claude.ai Meta Ads connector's tools are allowed for bots with the Meta connection", async () => {
+  const { saveConnection, connectionTools } = await import('../src/connections.js');
+  saveConnection('meta', { config: { token: 'EAA' + 'x'.repeat(40), adAccountId: '123' }, bots: ['marketing'] });
+  assert.ok(connectionTools('marketing').includes('mcp__claude_ai_Meta_Ads'));
+  assert.ok(!connectionTools('design').includes('mcp__claude_ai_Meta_Ads'));
+});

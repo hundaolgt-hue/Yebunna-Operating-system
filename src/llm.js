@@ -103,7 +103,9 @@ const npx = (args) => (process.platform === 'win32' ? { command: 'cmd', args: ['
 function mcpConfig(agentId = 'shared', tools = []) {
   const servers = connectionMcpServers(tools);
   if (!tools.includes('mcp__browser')) {
-    if (!Object.keys(servers).length) return null;
+    // Always a config (even an empty one): with --strict-mcp-config the run loads only these
+    // servers, never every MCP server and claude.ai connector on this PC (hundreds of tool
+    // descriptions on every run). A run that may use a claude.ai connector is the exception.
     fs.mkdirSync(BROWSER_DIR, { recursive: true });
     const file = path.join(BROWSER_DIR, `mcp-${agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`);
     fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }));
@@ -274,7 +276,10 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
   let child;
   try {
     browser = mcpConfig(agentId, tools);
-    if (browser) args.push('--mcp-config', browser.file, '--strict-mcp-config');
+    // A claude.ai connector (e.g. Meta Ads) can't be put in our config: the run must load the
+    // account's connectors, so it is not strict.
+    const connectors = tools.some((t) => t.startsWith('mcp__claude_ai_'));
+    if (browser) args.push('--mcp-config', browser.file, ...(connectors ? [] : ['--strict-mcp-config']));
     // Connected accounts: tokens go in this run's environment only; synced folders are added.
     const conn = agentId ? connectionRuntime(agentId) : { env: {}, addDirs: [] };
     for (const dir of conn.addDirs) args.push('--add-dir', dir);
