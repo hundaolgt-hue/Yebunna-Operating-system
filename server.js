@@ -27,7 +27,7 @@ import { resume as resumeAfterLimit, leaveApi, apiSpentToday, useApiIfPaused, bi
 /** The API fallback settings for the browser: never the key itself. */
 function publicFallback() {
   const f = state.apiFallback || {};
-  return { mode: billingMode(), enabled: billingMode() === 'auto', key: f.key ? `••••••${f.key.slice(-4)}` : '', dailyCapUsd: f.dailyCapUsd || 10, noOpus: f.noOpus !== false, spentToday: apiSpentToday() };
+  return { mode: billingMode(), enabled: billingMode() === 'auto', key: f.key ? `••••••${f.key.slice(-4)}` : '', dailyCapUsd: Number(f.dailyCapUsd) === 0 ? 0 : Number(f.dailyCapUsd) || 10, noOpus: f.noOpus !== false, spentToday: apiSpentToday() };
 }
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
@@ -505,9 +505,12 @@ const routes = {
       f.key = key;
     }
     if (body.dailyCapUsd !== undefined) {
-      const cap = Number(body.dailyCapUsd);
-      need(cap > 0 && cap <= 1000, 400, 'Set a daily cap between $1 and $1000.');
+      // 0 (or empty) = no cap.
+      const cap = body.dailyCapUsd === '' || body.dailyCapUsd === null ? 0 : Number(body.dailyCapUsd);
+      need(Number.isFinite(cap) && cap >= 0 && cap <= 100000, 400, 'Set a daily cap in dollars, or 0 for no cap.');
       f.dailyCapUsd = cap;
+      // A pause caused by the old cap ends as soon as the new cap allows more spending.
+      if (state.limit && /Daily API cap/.test(state.limit.message || '') && (cap === 0 || apiSpentToday() < cap)) resumeAfterLimit('daily cap raised');
     }
     if (body.noOpus !== undefined) f.noOpus = Boolean(body.noOpus);
     if (body.mode !== undefined) {

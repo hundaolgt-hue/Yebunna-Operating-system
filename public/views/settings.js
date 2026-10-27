@@ -45,8 +45,8 @@ export function renderSettings() {
       ${S.apiMode ? `<div class="kv"><span>Right now</span><b>💳 On the API key until ${esc(new Date(S.apiMode.backAt).toLocaleString())}</b></div>` : ''}
       <label class="setting"><span><b>Anthropic API key</b><small>console.anthropic.com → API keys (starts with sk-ant-). Stays on this PC; only bot runs get it.</small></span>
         <span class="row-btns"><input class="select-sm" type="password" data-api-key placeholder="${esc(fb.key || 'sk-ant-…')}" style="width:16em" /><button class="btn-ghost" data-api-test>Save & test</button></span></label>
-      <label class="setting"><span><b>Daily cap (USD)</b><small>Spent today on the API: $${(fb.spentToday || 0).toFixed(2)}</small></span>
-        <input class="select-sm" type="number" min="1" max="1000" step="1" data-api-cap value="${fb.dailyCapUsd || 10}" style="width:6em" /></label>
+      <label class="setting"><span><b>Daily cap (USD)</b><small>Spent today on the API: $${(fb.spentToday || 0).toFixed(2)}. 0 = no cap (the team never pauses for spending; watch your Anthropic console).</small></span>
+        <input class="select-sm" type="number" min="0" step="1" data-api-cap value="${fb.dailyCapUsd ?? 10}" style="width:6em" /></label>
       <label class="setting"><span><b>Fallback only: use Sonnet instead of Opus on the API</b><small>In "subscription, API as fallback" mode, bots set to Opus run on Sonnet while on the API. In "API only" mode every bot keeps its own model.</small></span>
         <label class="switch"><input type="checkbox" data-api="noOpus" ${fb.noOpus !== false ? 'checked' : ''}/><span></span></label></label>
     </section>
@@ -88,7 +88,13 @@ export function renderSettings() {
       .catch((e) => (toast(e.message), renderSettings()));
   $$('[data-api]').forEach((el) => el.addEventListener('change', () => putApi({ [el.dataset.api]: el.checked })));
   $$('[data-billing]').forEach((el) => el.addEventListener('change', () => putApi({ mode: el.value }).then(renderSettings)));
-  $$('[data-api-cap]').forEach((el) => el.addEventListener('change', () => putApi({ dailyCapUsd: Number(el.value) })));
+  $$('[data-api-cap]').forEach((el) =>
+    el.addEventListener('change', () => {
+      const cap = Number(el.value) || 0;
+      if (cap === 0 && !confirm('Remove the daily cap? The team will keep spending on your API key with no daily limit.')) return renderSettings();
+      putApi({ dailyCapUsd: cap }).then(renderSettings);
+    }),
+  );
   $$('[data-api-test]').forEach((b) =>
     b.addEventListener('click', async () => {
       const key = document.querySelector('[data-api-key]').value.trim();

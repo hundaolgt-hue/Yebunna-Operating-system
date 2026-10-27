@@ -258,12 +258,12 @@ function renderLimit() {
   const gb = S.disk ? (S.disk.free / 1024 ** 3).toFixed(1) : '?';
   if (!S.limit && S.apiFallback?.mode === 'api') {
     el.hidden = false;
-    el.innerHTML = `<span>💳 <b>API only</b> — every run is billed to your API key. Spent today: $${(S.apiFallback.spentToday || 0).toFixed(2)} of $${S.apiFallback.dailyCapUsd || 10}.</span><span class="spacer"></span><a class="btn-ghost" href="#/settings">Billing</a>`;
+    el.innerHTML = `<span>💳 <b>API only</b> — every run is billed to your API key. Spent today: $${(S.apiFallback.spentToday || 0).toFixed(2)}${S.apiFallback.dailyCapUsd === 0 ? ' (no cap)' : ` of $${S.apiFallback.dailyCapUsd ?? 10}`}.</span><span class="spacer"></span><a class="btn-ghost" href="#/settings">Billing</a>`;
     return;
   }
   if (!S.limit && S.apiMode) {
     el.hidden = false;
-    el.innerHTML = `<span>💳 <b>Running on your API key</b> — the plan's usage limit was hit. Back on the subscription ${S.apiMode.known ? `when it resets (${esc(new Date(S.apiMode.backAt).toLocaleString())})` : `at ${esc(new Date(S.apiMode.backAt).toLocaleString())}`}. Spent today: $${(S.apiFallback?.spentToday || 0).toFixed(2)} of $${S.apiFallback?.dailyCapUsd || 10}.</span><span class="spacer"></span><button class="btn-ghost" data-api-off>Back to the plan now</button>`;
+    el.innerHTML = `<span>💳 <b>Running on your API key</b> — the plan's usage limit was hit. Back on the subscription ${S.apiMode.known ? `when it resets (${esc(new Date(S.apiMode.backAt).toLocaleString())})` : `at ${esc(new Date(S.apiMode.backAt).toLocaleString())}`}. Spent today: $${(S.apiFallback?.spentToday || 0).toFixed(2)}${S.apiFallback?.dailyCapUsd === 0 ? ' (no cap)' : ` of $${S.apiFallback?.dailyCapUsd ?? 10}`}.</span><span class="spacer"></span><button class="btn-ghost" data-api-off>Back to the plan now</button>`;
     $('[data-api-off]', el).addEventListener('click', () => api('/api/api-fallback/off', { method: 'POST' }).then(() => toast('Back on the subscription.')).catch((err) => toast(err.message)));
     return;
   }

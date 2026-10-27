@@ -88,7 +88,10 @@ const fallback = () => state.apiFallback || {};
 const today = () => new Date().toISOString().slice(0, 10);
 /** API money spent today (USD, as Claude Code reports it). */
 export const apiSpentToday = () => (state.apiSpend?.day === today() ? state.apiSpend.usd : 0);
-const underCap = () => apiSpentToday() < Number(fallback().dailyCapUsd || 10);
+/** The daily API cap in USD; 0 means no cap (Infinity). */
+export const apiCap = () => (Number(fallback().dailyCapUsd) === 0 ? Infinity : Number(fallback().dailyCapUsd) || 10);
+const underCap = () => apiSpentToday() < apiCap();
+const capText = () => (apiCap() === Infinity ? 'no cap' : `$${apiCap()}`);
 /**
  * How runs are billed (Settings → Billing):
  *   plan — the Claude subscription; at its limit the team pauses until it resets.
@@ -142,11 +145,11 @@ export function recordApiCost(usd) {
     // API only: past the cap, wait for tomorrow (UTC) — the plan is never used.
     const tomorrow = new Date();
     tomorrow.setUTCHours(24, 0, 30, 0);
-    hitLimit(`Daily API cap of $${fallback().dailyCapUsd || 10} reached`, tomorrow.toISOString(), 'usage', { noApi: true });
+    hitLimit(`Daily API cap of ${capText()} reached`, tomorrow.toISOString(), 'usage', { noApi: true });
   } else if (state.apiMode && !canUseApi()) {
     const backAt = state.apiMode.backAt;
     leaveApi('daily API cap reached');
-    hitLimit(`Daily API cap of $${fallback().dailyCapUsd || 10} reached`, backAt, 'usage', { noApi: true });
+    hitLimit(`Daily API cap of ${capText()} reached`, backAt, 'usage', { noApi: true });
   }
 }
 

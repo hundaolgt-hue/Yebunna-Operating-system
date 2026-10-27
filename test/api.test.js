@@ -126,3 +126,14 @@ test('the Meta probe runs one bot with Echo\'s setup and returns its report', as
   assert.match(report, /CONNECTOR TOOL/);
   assert.match(report, /CONCLUSION/);
 });
+
+test('a daily cap of 0 means no cap', async () => {
+  const { apiCap } = await import('../src/limits.js');
+  state.limit = null;
+  state.apiSpend = null;
+  state.apiFallback = { mode: 'api', key: 'sk-ant-test-0000000000000000000000', dailyCapUsd: 0 };
+  assert.equal(apiCap(), Infinity);
+  recordApiCost(500);
+  assert.equal(limited(), false, 'never paused for spending');
+  assert.equal(onApi(), true);
+});

@@ -385,7 +385,7 @@ async function poll(gen) {
 let resumedAt = 0;
 let resumeNote = null;
 bus.on('disk.alert', (text) => notifyFounder(text));
-bus.on('api.on', (m) => notifyFounder(`💳 Your Claude plan's usage limit was reached, so the team switched to your API key. Back on the subscription ${m.known ? 'when it resets' : 'at'} ${new Date(m.backAt).toLocaleString()}. Daily cap: $${state.apiFallback?.dailyCapUsd || 10}.`));
+bus.on('api.on', (m) => notifyFounder(`💳 Your Claude plan's usage limit was reached, so the team switched to your API key. Back on the subscription ${m.known ? 'when it resets' : 'at'} ${new Date(m.backAt).toLocaleString()}. Daily cap: ${Number(state.apiFallback?.dailyCapUsd) === 0 ? 'none' : `$${state.apiFallback?.dailyCapUsd || 10}`}.`));
 bus.on('api.off', ({ reason }) => notifyFounder(reason === 'plan reset' ? '🔁 Back on your Claude subscription (the plan has reset). If it is still limited, the team switches to the API key again.' : `🔁 Stopped using the API key (${reason}).`));
 bus.on('limit.hit', (limit) => {
   if (limit.kind === 'disk') return; // disk.alert already said it
