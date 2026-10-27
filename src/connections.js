@@ -411,6 +411,7 @@ export function driveOutputRoot() {
 
 /** Instructions describing the bot's connections and the rules for using them. */
 export function connectionPrompt(agentId) {
+  const cfg = (id) => conns()[id]?.config || {};
   const parts = [];
   if (allowed('github', agentId)) {
     parts.push(`- GitHub (${conns().github.status?.account || 'connected'}): use the GitHub MCP tools (mcp__github__*) for repositories, files, issues and pull requests. git over HTTPS can use the GITHUB_TOKEN environment variable. Work on a new branch and open a pull request; never force-push, delete repositories or branches, change settings, or merge into the main branch unless the task explicitly says so.`);
