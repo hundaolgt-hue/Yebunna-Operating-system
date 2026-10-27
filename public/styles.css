@@ -481,3 +481,5 @@ ol.steps { margin: 0 0 8px; padding-left: 20px; color: var(--muted); font-size: 
 .usage-table td, .usage-table th { padding: 6px 4px; border-top: 1px solid var(--border); text-align: left; }
 .usage-table th { color: var(--muted); font-weight: 500; }
 .usage-table td.num, .usage-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+pre.probe { white-space: pre-wrap; background: var(--panel, #111); border: 1px solid var(--line, #333); border-radius: 8px; padding: 10px; margin: 8px 0; max-height: 18em; overflow: auto; }

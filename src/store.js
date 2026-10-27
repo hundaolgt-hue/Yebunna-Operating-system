@@ -44,6 +44,7 @@ export const state = {
   settings: {
     approvePlans: false,
     approveDeliverables: false,
+    progressUpdates: true, // a Telegram note after each finished task: done, next
     terminal: true, // let bots run shell commands (Bash, e.g. Python) in the workspace
     browserHeadless: false, // false = you can watch the bot's browser and take over
     browser: process.platform === 'win32' ? 'msedge' : 'chrome', // Edge ships with Windows

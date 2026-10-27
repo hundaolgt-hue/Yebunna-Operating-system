@@ -9,6 +9,19 @@ export function renderConnections() {
     <p class="faint small">Other sites (Gmail, Canva, Ye-Buna …): turn on computer use and use <b>🔑 Log in to a site</b> on a bot's page.</p>
   </div>`;
   const v = view();
+  $$('[data-probe]', v).forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      b.textContent = '🔬 Running a bot… (up to a minute)';
+      try {
+        await api('/api/connections/meta/probe', { method: 'POST' });
+        toast('Done — the report is under the Meta connection.');
+      } catch (e) {
+        toast(e.message);
+      }
+      renderConnections();
+    }),
+  );
   $$('[data-conn]', v).forEach((form) => {
     const id = form.dataset.conn;
     const allBox = $('[data-all]', form);
@@ -50,6 +63,7 @@ function card(c) {
     <div class="row"><span class="conn-icon">${c.icon}</span><h3>${esc(c.label)}</h3><span class="spacer"></span>${badge}</div>
     <p class="side-text">${esc(c.uses)}</p>
     ${st ? `<p class="small ${st.ok ? 'ok-text' : 'bad-text'}">${st.ok ? `✓ ${esc(st.account)}` : `✕ ${esc(st.error)}`} · checked ${ago(st.at)}</p>` : ''}
+    ${c.id === 'meta' && c.enabled ? `<div class="row-btns"><button class="btn-ghost" data-probe="meta">🔬 Test the bots' access (one short bot run)</button></div>${c.probe ? `<pre class="small probe">${esc(c.probe.report)}\n— ${ago(c.probe.at)}</pre>` : ''}` : ''}
     <details ${c.enabled ? '' : 'open'}><summary>${c.enabled ? 'Change settings' : 'How to connect'}</summary>
       <ol class="steps">${c.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
       <p class="small"><a class="link" href="${c.link}" target="_blank" rel="noopener">Open ${esc(new URL(c.link).hostname)} ↗</a></p>

@@ -11,7 +11,7 @@ import { WORKSPACE, state } from './store.js';
 import { connectionMcpServers, connectionRuntime } from './connections.js';
 import { recordUsage } from './usage.js';
 import { runSettings } from './agents.js';
-import { UsageLimitError, limited, hitLimit, parseReset, onApi, recordApiCost, apiFailed, resume, leaveApi, pauseReason } from './limits.js';
+import { UsageLimitError, limited, hitLimit, parseReset, onApi, recordApiCost, apiFailed, resume, leaveApi, pauseReason, billingMode } from './limits.js';
 import { bus } from './bus.js';
 
 const MODEL = process.env.CLAUDE_MODEL || '';
@@ -234,8 +234,8 @@ export function pick(kind, model, effort, maxTurns, size = 'medium', agentId) {
 
 export async function* streamChat({ system, messages, effort = 'medium', tools = [], model, maxTurns = 100, agentId, kind = 'other', size, signal, demo, onStart, probe = false }) {
   ({ model, effort, maxTurns } = pick(kind, model, effort, maxTurns, size, agentId));
-  const api = onApi() && !probe; // this run is billed to the API key (a probe always tests the plan)
-  if (api && state.apiFallback?.noOpus && /opus/i.test(model || '')) model = 'sonnet'; // keep API costs down
+  const api = onApi() && !(probe && billingMode() !== 'api'); // billed to the API key (a plan probe tests the plan)
+  if (api && billingMode() === 'auto' && state.apiFallback?.noOpus && /opus/i.test(model || '')) model = 'sonnet'; // keep fallback costs down
   if (demoMode) {
     onStart?.();
     yield* demoStream(demo ? demo() : 'Demo mode: install Claude Code and log in to run the team on Claude.', signal);
@@ -377,7 +377,7 @@ export async function* streamChat({ system, messages, effort = 'medium', tools =
     }
     // Claude Code's own error text only (not what the bot wrote).
     const all = `${why}\n${stderr}`;
-    if (LIMIT_TEXT.test(all)) {
+    if (LIMIT_TEXT.test(all) && !api) {
       const resetAt = parseReset(all);
       hitLimit(why, resetAt);
       throw new UsageLimitError(`Your Claude usage limit was reached — work pauses and resumes automatically${resetAt ? ` at ${new Date(resetAt).toLocaleString()}` : ''}.`, resetAt);
@@ -413,7 +413,7 @@ export async function complete(opts, onEvent) {
 // goes through, the pause was not real and the team resumes; if it hits the limit, the pause stays.
 // The same check ends an API-fallback period early when the plan works again.
 export async function probeLimit() {
-  if (demoMode) return;
+  if (demoMode || billingMode() === 'api') return; // API only: there is no plan to test
   const usagePause = state.limit?.kind === 'usage';
   if (!usagePause && !onApi()) return;
   try {

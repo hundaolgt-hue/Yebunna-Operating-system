@@ -105,3 +105,20 @@ test('when the CEO asks "do you mean T1?", a plain "yes" settles it — no secon
   await until(() => a.status === 'done' && t.status === 'done', 'the redo');
   assert.equal(state.ceoFocus?.taskId, t.id);
 });
+
+test('a fact the founder gives is kept with the product and reaches every bot', async () => {
+  const { setFact, factsBlock } = await import('../src/orchestrator.js');
+  const m2 = createMissionWithTasks({ goal: 'ProjectControl launch', deadline: inHours(4), specs: [spec('landing', 'Build the ProjectControl landing page')] });
+  m2.product = 'ProjectControl';
+  await until(() => m2.status === 'done', 'the mission');
+  setFact(m2, 'checkout link', 'https://ye-buna.com/hundaolgirma?product=abc');
+  setFact(m2, 'support phone', '0912736754');
+  assert.match(factsBlock(m2), /checkout link: https:\/\/ye-buna\.com/);
+  assert.ok(fs.existsSync(path.join(process.env.WORKSPACE_DIR, m2.folder, 'FACTS.md')));
+  // A redo of the page task carries the facts in its instructions.
+  const t = missionTasks(m2)[0];
+  await ceoChat('Edit the ProjectControl landing page: use the checkout link on every button', { via: 'app' });
+  await until(() => t.status === 'done' && t.completedAt && m2.status === 'done', 'the redo');
+  const { assignmentPrompt } = await import('../src/orchestrator.js');
+  assert.match(assignmentPrompt(m2, t, getAgent('landing')), /PRODUCT FACTS[\s\S]*support phone: 0912736754/);
+});

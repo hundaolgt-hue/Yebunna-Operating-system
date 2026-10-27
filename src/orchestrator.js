@@ -435,6 +435,30 @@ function addTasks(m, item, specs) {
   return dropped;
 }
 
+// ---- product facts: what the founder told us, kept per mission and given to every bot ----------
+
+/** The mission's facts as a prompt block (and the text of its FACTS.md). */
+export function factsBlock(m) {
+  const facts = m.facts || {};
+  const keys = Object.keys(facts);
+  if (!keys.length) return '';
+  return `PRODUCT FACTS (from the founder; use exactly these, never a placeholder like "founder will provide"):\n${keys.map((k) => `- ${k}: ${facts[k]}`).join('\n')}`;
+}
+
+/** Record a fact the founder gave (price, checkout link, phone…): kept with the mission, shown to every bot. */
+export function setFact(m, key, value) {
+  key = String(key).trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 60);
+  value = String(value).trim().slice(0, 400);
+  if (!key || !value) return false;
+  (m.facts ||= {})[key] = value;
+  try {
+    fs.mkdirSync(path.join(WORKSPACE, m.folder), { recursive: true });
+    fs.writeFileSync(path.join(WORKSPACE, m.folder, 'FACTS.md'), `# Facts for ${m.product || m.title}\n\n${Object.entries(m.facts).map(([k, v]) => `- **${k}**: ${v}`).join('\n')}\n`);
+  } catch {}
+  emitMission(m);
+  return true;
+}
+
 /** Does the founder's text name this task: its T-number, its id, or the words of its title? */
 export function mentionsTask(text, t, m) {
   const tn = missionTasks(m).indexOf(t) + 1;
@@ -483,7 +507,7 @@ async function planNow(m, instruction, before) {
     .map((t, i) => `- T${i + 1} id ${t.id} [${t.status}] ${t.title} → ${getAgent(t.agentId)?.name}: ${String(t.deliverable || '').slice(0, 120)}`)
     .join('\n');
   const prompt = `Product / mission: ${m.goal}
-Now: ${fmt(now())} · deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} h left)
+Now: ${fmt(now())} · deadline: ${fmt(m.deadline)} (${hoursLeft(m).toFixed(1)} h left)${factsBlock(m) ? `\n${factsBlock(m)}` : ''}
 ${existing ? `\nTasks already assigned in this mission:\n${existing}\n` : ''}
 ${
     instruction
@@ -706,7 +730,7 @@ function dispatch() {
 /** The short handover a finished task passes on (its final message), for the tasks after it. */
 const handoverOf = (t) => clip(String(t.output || '').trim(), 1500);
 
-function assignmentPrompt(m, t, agent) {
+export function assignmentPrompt(m, t, agent) {
   // Everything handed over earlier in this mission, in order (short handovers, not full outputs).
   const before = missionTasks(m).slice(0, m.taskIds.indexOf(t.id));
   const inputs = before
@@ -729,8 +753,9 @@ function assignmentPrompt(m, t, agent) {
   const coreNames = new Set((agent.coreSkills || []).map((n) => n.toLowerCase()));
   const own = agentSkills(agent.id).filter((s) => !s.path && !s.house && !coreNames.has(s.name.toLowerCase())).slice(-3);
   const writtenBodies = [skill, ...named.map((x) => x.s), ...own].filter((s, i, all) => s && !s.path && all.indexOf(s) === i).map((s) => `### Skill: ${s.name}\n${s.body}`);
+  const facts = factsBlock(m);
   return `Task from ${ceo().name} (CEO): ${t.title}
-Product: ${m.goal}
+Product: ${m.goal}${facts ? `\n${facts}` : ''}
 Brief: ${t.brief}
 Deliverable: ${t.deliverable}${t.inputs?.length ? `\nInputs:\n${t.inputs.map((x) => `- ${x}`).join('\n')}` : ''}${skills.length ? `\nSkills (open each before you start):\n${skills.join('\n')}` : ''}${t.acceptance?.length ? `\nAcceptance criteria (check them yourself before handing in):\n${t.acceptance.map((x) => `- ${x}`).join('\n')}` : ''}
 Deadline: ${fmt(t.deadline)} (now ${fmt(now())})
@@ -745,6 +770,7 @@ Your FINAL message is only the handover, at most 150 words, exactly in this form
 RESULT: <one line>
 FILES: <paths you saved>
 KEY POINTS: <up to 5 short bullets: decisions, numbers, what the next teammate must know>
+FACTS NEEDED: <facts you had to leave blank because nobody gave them (e.g. "checkout link"), or "none">
 OPEN: <anything unresolved, or "none">
 
 If you are truly stuck (missing access or login, a decision only the founder can make, a tool that fails
@@ -1034,6 +1060,16 @@ function finishTask(m, t) {
   t.late = Date.parse(t.completedAt) > Date.parse(t.deadline);
   fileDeliverable(m, t);
   logActivity(t.agentId, `delivered “${t.title}”${t.late ? ' (late)' : ''}`, { type: 'task', id: t.id, missionId: m.id });
+  // A short progress note to the founder: what was done, what comes next (Settings → Progress updates).
+  if (state.settings.progressUpdates !== false && (m.source === 'founder' || m.source === 'chat')) {
+    const all = missionTasks(m);
+    const n = all.indexOf(t) + 1;
+    const next = all.find((x) => !['done', 'failed'].includes(x.status));
+    const result = String(t.output || '').match(/^RESULT:\s*(.+)$/m)?.[1] || '';
+    const needed = String(t.output || '').match(/^FACTS NEEDED:\s*(.+)$/m)?.[1];
+    if (needed && !/^\s*none\b/i.test(needed)) notifyFounder(`📎 ${getAgent(t.agentId)?.name} needs from you for ${m.product || m.title}: ${needed.slice(0, 300)}\nReply here with the value and I'll pass it to the team.`, { type: 'mission', id: m.id });
+    notifyFounder(`✅ T${n} done — ${t.title} (${getAgent(t.agentId)?.name})${result ? `\n${result.slice(0, 200)}` : ''}\n${next ? `Next: T${all.indexOf(next) + 1} ${next.title} (${getAgent(next.agentId)?.name})` : 'That was the last task — the report is next.'}`, { type: 'mission', id: m.id });
+  }
   // Copied to Drive in the background (big files must not freeze the app); one copy at a time.
   drive = drive
     .then(() => publishTask(m, t, getAgent(t.agentId)?.name || 'bot'))

@@ -13,6 +13,8 @@ export function renderSettings() {
         <label class="switch"><input type="checkbox" data-set="approvePlans" ${st.approvePlans ? 'checked' : ''}/><span></span></label></label>
       <label class="setting"><span><b>Approve every deliverable</b><small>After the CEO's review, each deliverable waits for your Approve / Request changes.</small></span>
         <label class="switch"><input type="checkbox" data-set="approveDeliverables" ${st.approveDeliverables ? 'checked' : ''}/><span></span></label></label>
+      <label class="setting"><span><b>Progress updates on Telegram</b><small>After each finished task: what was done and what comes next. Blockers, sign-offs and the final report are always sent.</small></span>
+        <label class="switch"><input type="checkbox" data-set="progressUpdates" ${st.progressUpdates !== false ? 'checked' : ''}/><span></span></label></label>
     </section>
     <section class="settings">
       <h3>Computer use</h3>
@@ -36,16 +38,16 @@ export function renderSettings() {
       ${usageTable()}
     </section>
     <section class="settings">
-      <h3>API fallback</h3>
-      <p class="side-text">When your Claude plan's usage limit is hit, the team can keep working on your Anthropic API key instead of pausing, and switch back to the subscription by itself when the plan resets. API use is billed per token by Anthropic, so set a daily cap: past it, the team pauses as usual.</p>
+      <h3>Billing</h3>
+      <p class="side-text">How the team's runs are paid for. The API is billed per token by Anthropic (console.anthropic.com), separately from your Claude subscription, so it has a daily cap: past it the team pauses until the next day.</p>
+      <label class="setting"><span><b>Run the team on</b><small>${esc(BILLING[fb.mode || 'plan'])}</small></span>
+        <select class="select-sm" data-billing>${Object.entries(BILLING_LABEL).map(([v, l]) => `<option value="${v}" ${(fb.mode || 'plan') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       ${S.apiMode ? `<div class="kv"><span>Right now</span><b>💳 On the API key until ${esc(new Date(S.apiMode.backAt).toLocaleString())}</b></div>` : ''}
-      <label class="setting"><span><b>Use my API key when the plan's limit is hit</b><small>Then back to the subscription when it resets.</small></span>
-        <label class="switch"><input type="checkbox" data-api="enabled" ${fb.enabled ? 'checked' : ''}/><span></span></label></label>
-      <label class="setting"><span><b>Anthropic API key</b><small>console.anthropic.com → API keys (starts with sk-ant-). Stays on this PC; only bot runs get it, and only while on the fallback.</small></span>
+      <label class="setting"><span><b>Anthropic API key</b><small>console.anthropic.com → API keys (starts with sk-ant-). Stays on this PC; only bot runs get it.</small></span>
         <span class="row-btns"><input class="select-sm" type="password" data-api-key placeholder="${esc(fb.key || 'sk-ant-…')}" style="width:16em" /><button class="btn-ghost" data-api-test>Save & test</button></span></label>
       <label class="setting"><span><b>Daily cap (USD)</b><small>Spent today on the API: $${(fb.spentToday || 0).toFixed(2)}</small></span>
         <input class="select-sm" type="number" min="1" max="1000" step="1" data-api-cap value="${fb.dailyCapUsd || 10}" style="width:6em" /></label>
-      <label class="setting"><span><b>Use Sonnet instead of Opus on the API</b><small>Opus costs more per token. Bots set to Opus run on Sonnet while on the API.</small></span>
+      <label class="setting"><span><b>Fallback only: use Sonnet instead of Opus on the API</b><small>In "subscription, API as fallback" mode, bots set to Opus run on Sonnet while on the API. In "API only" mode every bot keeps its own model.</small></span>
         <label class="switch"><input type="checkbox" data-api="noOpus" ${fb.noOpus !== false ? 'checked' : ''}/><span></span></label></label>
     </section>
     <section class="settings">
@@ -85,6 +87,7 @@ export function renderSettings() {
       .then((f) => ((S.apiFallback = f), toast('Saved.')))
       .catch((e) => (toast(e.message), renderSettings()));
   $$('[data-api]').forEach((el) => el.addEventListener('change', () => putApi({ [el.dataset.api]: el.checked })));
+  $$('[data-billing]').forEach((el) => el.addEventListener('change', () => putApi({ mode: el.value }).then(renderSettings)));
   $$('[data-api-cap]').forEach((el) => el.addEventListener('change', () => putApi({ dailyCapUsd: Number(el.value) })));
   $$('[data-api-test]').forEach((b) =>
     b.addEventListener('click', async () => {
@@ -122,6 +125,12 @@ export function renderSettings() {
   );
 }
 
+const BILLING_LABEL = { plan: 'My Claude subscription', auto: 'Subscription, API key as fallback', api: 'API key only' };
+const BILLING = {
+  plan: 'Every run counts against your Claude plan. At its usage limit the team pauses until it resets.',
+  auto: 'Runs count against your plan; while its limit is hit, the team carries on with your API key and switches back when the plan resets.',
+  api: 'Every run is billed to your API key, never to the subscription. No plan limits; the daily cap below is the only brake.',
+};
 const MODELS = ['opus', 'sonnet', 'haiku'];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const pickSel = (id, field, value, options) =>

@@ -88,9 +88,17 @@ const fallback = () => state.apiFallback || {};
 const today = () => new Date().toISOString().slice(0, 10);
 /** API money spent today (USD, as Claude Code reports it). */
 export const apiSpentToday = () => (state.apiSpend?.day === today() ? state.apiSpend.usd : 0);
-const canUseApi = () => Boolean(fallback().enabled && fallback().key && apiSpentToday() < Number(fallback().dailyCapUsd || 10));
+const underCap = () => apiSpentToday() < Number(fallback().dailyCapUsd || 10);
+/**
+ * How runs are billed (Settings → Billing):
+ *   plan — the Claude subscription; at its limit the team pauses until it resets.
+ *   auto — the subscription, with the API key as a fallback while the plan's limit is hit.
+ *   api  — every run on the API key; the subscription is never used.
+ */
+export const billingMode = () => (fallback().mode === 'api' || fallback().mode === 'plan' ? fallback().mode : fallback().enabled ? 'auto' : 'plan');
+const canUseApi = () => Boolean(billingMode() === 'auto' && fallback().key && underCap());
 /** Are runs billed to the API key right now? */
-export const onApi = () => Boolean(state.apiMode);
+export const onApi = () => billingMode() === 'api' ? Boolean(fallback().key) : Boolean(state.apiMode);
 let apiTimer = null;
 
 /** The plan's limit was hit: carry on with the API key until the plan resets. */
@@ -130,7 +138,12 @@ export function recordApiCost(usd) {
   state.apiSpend = state.apiSpend?.day === day ? state.apiSpend : { day, usd: 0 };
   state.apiSpend.usd += Number(usd) || 0;
   save();
-  if (state.apiMode && !canUseApi()) {
+  if (billingMode() === 'api' && !underCap() && !state.limit) {
+    // API only: past the cap, wait for tomorrow (UTC) — the plan is never used.
+    const tomorrow = new Date();
+    tomorrow.setUTCHours(24, 0, 30, 0);
+    hitLimit(`Daily API cap of $${fallback().dailyCapUsd || 10} reached`, tomorrow.toISOString(), 'usage', { noApi: true });
+  } else if (state.apiMode && !canUseApi()) {
     const backAt = state.apiMode.backAt;
     leaveApi('daily API cap reached');
     hitLimit(`Daily API cap of $${fallback().dailyCapUsd || 10} reached`, backAt, 'usage', { noApi: true });
@@ -141,7 +154,8 @@ export function recordApiCost(usd) {
 export function apiFailed(message) {
   const backAt = state.apiMode?.backAt;
   leaveApi('API key failed');
-  hitLimit(`API key: ${message}`, backAt, 'usage', { noApi: true });
+  // API only: nothing else to fall back to; try again in an hour (or when the founder fixes the key).
+  hitLimit(`API key: ${message}`, backAt || (billingMode() === 'api' ? new Date(Date.now() + 3600e3).toISOString() : null), 'usage', { noApi: true });
 }
 
 /**

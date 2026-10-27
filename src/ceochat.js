@@ -46,8 +46,9 @@ function missionLine(m, full) {
   const head = `- mission ${m.id} — product: ${m.product || m.title} [${m.status}]`;
   if (!full) return `${head}: ${tasks.map((t, i) => `T${i + 1} ${clip(t.title, 50)} [${t.status}] (${t.id})`).join('; ') || 'no tasks'}`;
   const said = m.thread.filter((i) => i.role === 'user').slice(-3).map((i) => clip(i.text, 120));
+  const facts = Object.entries(m.facts || {}).map(([k, v]) => `${k}: ${clip(v, 80)}`).join(' · ');
   return `${head}
-  goal: ${clip(m.goal, 240)}${said.length > 1 ? `\n  founder's latest instructions: ${said.slice(1).join(' | ')}` : ''}
+  goal: ${clip(m.goal, 240)}${facts ? `\n  facts: ${facts}` : ''}${said.length > 1 ? `\n  founder's latest instructions: ${said.slice(1).join(' | ')}` : ''}
 ${tasks.map((t, i) => `  - T${i + 1} (task ${t.id}): ${t.title} → ${getAgent(t.agentId)?.name} [${t.status}]${t.file ? ` · ${t.file}` : ''}`).join('\n') || '  (no tasks yet)'}`;
 }
 
@@ -210,7 +211,7 @@ export function ceoChat(text, opts = {}) {
 
 async function ceoTurn(text, { via = 'telegram', focus: replyFocus = null, attachments = [], replay = false } = {}) {
   const { waitingItems, answerItem } = await import('./telegram.js');
-  const { createMission, sendToMission, amendTask, stopTask, cancelMission } = await import('./orchestrator.js');
+  const { createMission, sendToMission, amendTask, stopTask, cancelMission, setFact, factsBlock } = await import('./orchestrator.js');
   const { addRule } = await import('./playbook.js');
   const ceo = getAgent('ceo');
   const history = (state.chats.ceo ||= []);
@@ -279,7 +280,8 @@ HOW TO ACT. First decide what the ONE thing the founder wants is, then end your 
   {"type": "approve", "item": <number>},
   {"type": "changes", "item": <number>, "text": "<what should change>"},
   {"type": "rule", "rule": "do" | "dont", "text": "<a standing rule>"},
-  {"type": "remember", "text": "<a standing fact or preference>"}
+  {"type": "fact", "mission": "<mission id>", "key": "<e.g. price | checkout link | support phone | pixel id | page url>", "value": "<exact value>"},
+  {"type": "remember", "text": "<a standing fact or preference about the founder or the company>"}
 ]
 \`\`\`
 RULES
@@ -293,7 +295,11 @@ RULES
   or "stop" (a running task), and NOTHING else. Then add a "rule" of type "dont" (one line, concrete) so
   you don't repeat the mistake, and apologise in five words or fewer.
 - "always … / never … / from now on …" → "rule". Answers and approvals → "answer" / "approve" / "changes".
-- Questions and status → just answer (you may read the team's files). No block.
+- A concrete fact about a product (a price, a link, a phone number, an id, a name, a decision) → "fact" for that
+  product's mission, as well as any edit it belongs to. Facts go to every bot; nothing is ever left as
+  "founder will provide" once you have it.
+- Questions and status → just answer (you may read the team's files). No block. For status, use this shape:
+  Done: … · Now: T<n> <task> (<bot>, since <time>) · Next: … · Needs you: … (or "nothing").
 - When you can't tell which task or product, ask in one line instead of guessing.${correcting ? '\n\nThe founder is CORRECTING you: undo or stop, add a dont-rule, nothing else.' : ''}`;
 
   let reply;
@@ -410,6 +416,12 @@ RULES
       } else if (a.type === 'rule' && a.text) {
         const r = addRule({ type: a.rule === 'dont' ? 'dont' : 'do', text: a.text, why: correcting ? `Founder correction: “${clip(text, 120)}”` : 'Founder', source: correcting ? 'correction' : 'founder' });
         done.push(r ? `📌 ${correcting ? 'Lesson kept' : 'New team rule'}: ${r.type === 'do' ? 'DO' : "DON'T"} ${r.text}` : '📌 Already in the playbook.');
+      } else if (a.type === 'fact' && a.key && a.value) {
+        const m = state.missions[a.mission] || current || missionFor(`${a.key} ${a.value} ${text}`);
+        if (!m) throw new Error('which product is that fact for?');
+        setFact(m, a.key, a.value);
+        setFocus(m.id, focus()?.missionId === m.id ? focus().taskId : null);
+        done.push(`📎 Noted for ${m.product || m.title}: ${a.key} = ${a.value}`);
       } else if (a.type === 'remember' && a.text) {
         remember('ceo', String(a.text), 'telegram');
         done.push('🧠 Noted.');

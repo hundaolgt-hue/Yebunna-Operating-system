@@ -100,3 +100,29 @@ test("the claude.ai Meta Ads connector's tools are allowed for bots with the Met
   assert.ok(connectionTools('marketing').includes('mcp__claude_ai_Meta_Ads'));
   assert.ok(!connectionTools('design').includes('mcp__claude_ai_Meta_Ads'));
 });
+
+test('API only: every run is on the key, the plan is never consulted, the cap pauses until tomorrow', async () => {
+  const { billingMode, apiSpentToday } = await import('../src/limits.js');
+  state.apiSpend = null;
+  state.limit = null;
+  state.apiFallback = { mode: 'api', key: 'sk-ant-test-0000000000000000000000', dailyCapUsd: 1, noOpus: true };
+  assert.equal(billingMode(), 'api');
+  assert.equal(onApi(), true, 'on the key from the start, with no limit hit');
+  hitLimit('Claude AI usage limit reached', inHour()); // a stray plan notice changes nothing
+  assert.equal(onApi(), true);
+  recordApiCost(1.5);
+  assert.ok(limited(), 'past the cap: paused');
+  assert.ok(Date.parse(state.limit.resetAt) > Date.now(), 'until tomorrow');
+  assert.equal(apiSpentToday(), 1.5);
+  resume();
+  state.apiFallback = { mode: 'plan', key: '', dailyCapUsd: 10 };
+  assert.equal(billingMode(), 'plan');
+  assert.equal(onApi(), false);
+});
+
+test('the Meta probe runs one bot with Echo\'s setup and returns its report', async () => {
+  const { probeMeta } = await import('../src/connections.js');
+  const report = await probeMeta();
+  assert.match(report, /CONNECTOR TOOL/);
+  assert.match(report, /CONCLUSION/);
+});

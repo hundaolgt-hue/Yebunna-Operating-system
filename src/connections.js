@@ -136,7 +136,7 @@ export function listConnections() {
   return Object.entries(SERVICES).map(([id, svc]) => {
     const c = get(id);
     const config = Object.fromEntries(svc.fields.map((f) => [f.key, f.secret ? (c.config?.[f.key] ? '••••••' + String(c.config[f.key]).slice(-4) : '') : c.config?.[f.key] || '']));
-    return { id, label: svc.label, icon: svc.icon, fields: svc.fields, steps: svc.steps, link: svc.link, uses: svc.uses, needsTerminal: !!svc.needsTerminal, system: !!svc.system, enabled: !!c.enabled, bots: c.bots || svc.bots, config, status: c.status || null };
+    return { id, label: svc.label, icon: svc.icon, fields: svc.fields, steps: svc.steps, link: svc.link, uses: svc.uses, needsTerminal: !!svc.needsTerminal, system: !!svc.system, enabled: !!c.enabled, bots: c.bots || svc.bots, config, status: c.status || null, probe: c.probe || null };
   });
 }
 
@@ -301,8 +301,41 @@ export function connectionTools(agentId) {
     // The founder's claude.ai Meta Ads connector, when Claude Code on this PC is signed in with
     // that account: its tools appear in bot runs as mcp__claude_ai_Meta_Ads__* and must be
     // allowed here (the "always allow" on claude.ai never reaches these runs).
-    ...(allowed('meta', agentId) ? ['mcp__claude_ai_Meta_Ads'] : []),
+    // Both rule forms, so whichever one this Claude Code version matches on lets the tools through.
+    ...(allowed('meta', agentId) ? ['mcp__claude_ai_Meta_Ads', 'mcp__claude_ai_Meta_Ads__*'] : []),
   ];
+}
+
+/**
+ * The only way to know why Meta is blocked for the bots is to run one tiny bot run with Echo's
+ * exact setup and read what happens: does the claude.ai Meta Ads connector load, is its tool
+ * allowed, does the terminal helper reach Meta. Returns the bot's verbatim report.
+ */
+export async function probeMeta() {
+  const { getAgent, toolsFor } = await import('./agents.js');
+  const { complete } = await import('./llm.js');
+  const agent = getAgent('marketing');
+  if (!allowed('meta', 'marketing')) throw new Error('Allow Echo (the growth marketer) under "Which bots may use it", save, then test again.');
+  const text = await complete({
+    system: 'You are checking a connection for the founder. Do exactly the steps, then report verbatim. Never print tokens or keys.',
+    messages: [
+      {
+        role: 'user',
+        content: `Report on three checks, each on its own line, with the raw result or the exact error text (keep errors word for word):
+1. CONNECTOR TOOL: is a tool whose name starts with "mcp__claude_ai_Meta_Ads__" available to you right now? List up to 5 of their names, or say "none listed".
+2. CONNECTOR CALL: if such a tool exists, call mcp__claude_ai_Meta_Ads__ads_get_ad_accounts (or the closest one that lists ad accounts) and give its raw result or the exact error (e.g. a permission message). If none exists, say "skipped".
+3. HELPER: run the terminal command  python .tools/meta_api.py me  and give its output verbatim.
+Then one line: CONCLUSION: <which of the two paths works>.`,
+      },
+    ],
+    tools: toolsFor(agent),
+    agentId: 'marketing',
+    kind: 'probe',
+    effort: 'low',
+    maxTurns: 8,
+    demo: () => '1. CONNECTOR TOOL: none listed (demo mode)\n2. CONNECTOR CALL: skipped\n3. HELPER: {"error": "demo mode"}\nCONCLUSION: demo mode — nothing is real here.',
+  });
+  return text.trim();
 }
 
 /** MCP server definitions for connection tools (secrets come from env, never written to disk). */

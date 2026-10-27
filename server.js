@@ -22,12 +22,12 @@ import {
   answerTask,
 } from './src/orchestrator.js';
 import { addRule, removeRule, listRules } from './src/playbook.js';
-import { resume as resumeAfterLimit, leaveApi, apiSpentToday, useApiIfPaused } from './src/limits.js';
+import { resume as resumeAfterLimit, leaveApi, apiSpentToday, useApiIfPaused, billingMode } from './src/limits.js';
 
 /** The API fallback settings for the browser: never the key itself. */
 function publicFallback() {
   const f = state.apiFallback || {};
-  return { enabled: !!f.enabled, key: f.key ? `••••••${f.key.slice(-4)}` : '', dailyCapUsd: f.dailyCapUsd || 10, noOpus: f.noOpus !== false, spentToday: apiSpentToday() };
+  return { mode: billingMode(), enabled: billingMode() === 'auto', key: f.key ? `••••••${f.key.slice(-4)}` : '', dailyCapUsd: f.dailyCapUsd || 10, noOpus: f.noOpus !== false, spentToday: apiSpentToday() };
 }
 import { startRetro } from './src/meetings.js';
 import './src/telegram.js';
@@ -40,7 +40,7 @@ import { startMeeting, addFounderMessage, launchActionItems, deleteMeeting, resu
 import { createSkill, updateSkill, deleteSkill, skillFromTask, teachSkill, runSkill, generateRoleSkills, generateAllRoleSkills } from './src/skills.js';
 import { listPacks, installPack, installAll, refreshPackOwners } from './src/skillpacks.js';
 import { installSkillArchive, importClaudeSkills, initCustomSkills } from './src/skillimport.js';
-import { listConnections, saveConnection, removeConnection, testConnection, seedTools } from './src/connections.js';
+import { listConnections, saveConnection, removeConnection, testConnection, seedTools, probeMeta } from './src/connections.js';
 import { logActivity, toolTracker } from './src/activity.js';
 import { createRoutine, updateRoutine, deleteRoutine, fireRoutine } from './src/routines.js';
 
@@ -178,7 +178,7 @@ const routes = {
   'GET /api/settings': (req, res) => send(res, 200, state.settings),
   'PUT /api/settings': async (req, res) => {
     const body = await readBody(req);
-    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless']) if (k in body) state.settings[k] = Boolean(body[k]);
+    for (const k of ['approvePlans', 'approveDeliverables', 'terminal', 'browserHeadless', 'progressUpdates']) if (k in body) state.settings[k] = Boolean(body[k]);
     if (['chrome', 'msedge', 'firefox'].includes(body.browser)) state.settings.browser = body.browser;
     save();
     bus.emit('event', { type: 'settings', settings: state.settings });
@@ -510,8 +510,17 @@ const routes = {
       f.dailyCapUsd = cap;
     }
     if (body.noOpus !== undefined) f.noOpus = Boolean(body.noOpus);
-    if (body.enabled !== undefined) {
+    if (body.mode !== undefined) {
+      need(['plan', 'auto', 'api'].includes(body.mode), 400, 'Billing is plan, auto or api.');
+      need(body.mode === 'plan' || f.key, 400, 'Paste your API key first.');
+      f.mode = body.mode;
+      f.enabled = body.mode === 'auto';
+      if (body.mode !== 'auto') leaveApi(body.mode === 'api' ? 'API only' : 'turned off');
+      // Switching billing: a pause that belonged to the other mode ends now.
+      if (state.limit?.kind === 'usage' && (body.mode === 'api' || /^API key:|Daily API cap/.test(state.limit.message || ''))) resumeAfterLimit('billing changed');
+    } else if (body.enabled !== undefined) {
       need(!body.enabled || f.key, 400, 'Paste your API key first.');
+      f.mode = body.enabled ? 'auto' : 'plan';
       f.enabled = Boolean(body.enabled);
       if (!f.enabled) leaveApi('turned off');
     }
@@ -577,6 +586,16 @@ const routes = {
     } catch (e) {
       throw new HttpError(400, e.message);
     }
+  },
+  'POST /api/connections/meta/probe': async (req, res) => {
+    const report = await probeMeta();
+    const c = state.connections?.meta;
+    if (c) {
+      c.probe = { report, at: now() };
+      save();
+    }
+    bus.emit('event', { type: 'connections', connections: listConnections() });
+    send(res, 200, { report });
   },
   'POST /api/connections/:id/test': async (req, res, { id }) => {
     const status = await testConnection(id);
